@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Omni Memory - 带记忆功能的API中转站</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏 -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i class="fas fa-brain"></i>
+                <span>Omni Memory</span>
+            </div>
+            <nav class="nav-menu">
+                <a href="#endpoints" class="nav-item active" data-section="endpoints">
+                    <i class="fas fa-server"></i>
+                    <span>API端点</span>
+                </a>
+                <a href="#memory-settings" class="nav-item" data-section="memory-settings">
+                    <i class="fas fa-cog"></i>
+                    <span>记忆设置</span>
+                </a>
+                <a href="#memories" class="nav-item" data-section="memories">
+                    <i class="fas fa-database"></i>
+                    <span>记忆管理</span>
+                    <span class="badge" id="memory-count">0</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <p>v1.0.0</p>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 顶部栏 -->
+            <header class="header">
+                <h1 id="page-title">API端点管理</h1>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" id="refresh-btn">
+                        <i class="fas fa-refresh"></i> 刷新
+                    </button>
+                </div>
+            </header>
+
+            <!-- 端点管理页面 -->
+            <section id="endpoints-section" class="section active">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>已配置的端点</h2>
+                        <button class="btn btn-primary" id="add-endpoint-btn">
+                            <i class="fas fa-plus"></i> 添加端点
+                        </button>
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table" id="endpoints-table">
+                            <thead>
+                                <tr>
+                                    <th>名称</th>
+                                    <th>提供商</th>
+                                    <th>URL</th>
+                                    <th>模型</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- 动态填充 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 记忆设置页面 -->
+            <section id="memory-settings-section" class="section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>记忆功能配置</h2>
+                        <button class="btn btn-primary" id="save-settings-btn">
+                            <i class="fas fa-save"></i> 保存设置
+                        </button>
+                    </div>
+                    <div class="form-container">
+                        <!-- 记忆方式 -->
+                        <div class="form-group">
+                            <label class="form-label">记忆方式</label>
+                            <div class="radio-group">
+                                <label class="radio-item">
+                                    <input type="radio" name="memory-mode" value="builtin" checked>
+                                    <span class="radio-mark"></span>
+                                    <div class="radio-content">
+                                        <strong>内置记忆</strong>
+                                        <small>在系统提示词中注入记忆操作指导，引导模型返回记忆标签</small>
+                                    </div>
+                                </label>
+                                <label class="radio-item">
+                                    <input type="radio" name="memory-mode" value="external">
+                                    <span class="radio-mark"></span>
+                                    <div class="radio-content">
+                                        <strong>外接模型</strong>
+                                        <small>使用外部模型每N轮总结记忆</small>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- 注入方式 -->
+                        <div class="form-group">
+                            <label class="form-label">注入方式</label>
+                            <div class="radio-group">
+                                <label class="radio-item">
+                                    <input type="radio" name="injection-mode" value="full" checked>
+                                    <span class="radio-mark"></span>
+                                    <div class="radio-content">
+                                        <strong>全量注入</strong>
+                                        <small>将所有记忆注入到system字段，完整但消耗更多token</small>
+                                    </div>
+                                </label>
+                                <label class="radio-item">
+                                    <input type="radio" name="injection-mode" value="rag">
+                                    <span class="radio-mark"></span>
+                                    <div class="radio-content">
+                                        <strong>类RAG注入</strong>
+                                        <small>分析对话内容，只注入相关记忆</small>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- 外接模型配置 -->
+                        <div id="external-model-config" class="config-panel" style="display: none;">
+                            <h3>外接模型配置</h3>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>选择端点</label>
+                                    <select id="external-endpoint-select">
+                                        <option value="">-- 选择端点 --</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>选择模型</label>
+                                    <select id="external-model-select">
+                                        <option value="">-- 先选择端点 --</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>API端点URL</label>
+                                    <input type="text" id="external-endpoint" readonly placeholder="自动填充">
+                                </div>
+                                <div class="form-field">
+                                    <label>API密钥</label>
+                                    <input type="password" id="external-api-key" readonly placeholder="自动填充">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>总结间隔（轮）</label>
+                                    <input type="number" id="summary-interval" value="5" min="1" max="20">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- RAG配置 -->
+                        <div id="rag-config" class="config-panel" style="display: none;">
+                            <h3>RAG配置</h3>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>最大记忆数量</label>
+                                    <input type="number" id="rag-max-memories" value="10" min="1" max="50">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>选择端点</label>
+                                    <select id="rag-endpoint-select">
+                                        <option value="">-- 选择端点 --</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>选择模型（可选）</label>
+                                    <select id="rag-model-select">
+                                        <option value="">-- 先选择端点 --</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 记忆管理页面 -->
+            <section id="memories-section" class="section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>记忆列表</h2>
+                        <div class="search-box">
+                            <input type="text" id="memory-search" placeholder="搜索记忆...">
+                            <button class="btn btn-icon" id="search-btn">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                        <button class="btn btn-primary" id="add-memory-btn">
+                            <i class="fas fa-plus"></i> 添加记忆
+                        </button>
+                    </div>
+                    <div class="memories-list" id="memories-list">
+                        <!-- 动态填充 -->
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- 添加/编辑端点模态框 -->
+    <div class="modal" id="endpoint-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="endpoint-modal-title">添加端点</h3>
+                <button class="btn-close" id="close-endpoint-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="endpoint-form">
+                    <input type="hidden" id="endpoint-original-name">
+                    <div class="form-group">
+                        <label>端点名称</label>
+                        <input type="text" id="endpoint-name" required placeholder="例如：OpenAI">
+                    </div>
+                    <div class="form-group">
+                        <label>提供商</label>
+                        <select id="endpoint-provider" required>
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>API基础URL</label>
+                        <input type="url" id="endpoint-url" required placeholder="https://api.openai.com/v1">
+                    </div>
+                    <div class="form-group">
+                        <label>API密钥</label>
+                        <input type="password" id="endpoint-api-key" required placeholder="sk-...">
+                    </div>
+                    <div class="form-group">
+                        <label>模型列表（用逗号分隔）</label>
+                        <input type="text" id="endpoint-models" required placeholder="gpt-4,gpt-3.5-turbo">
+                    </div>
+                    <div class="form-group checkbox">
+                        <label>
+                            <input type="checkbox" id="endpoint-enabled" checked>
+                            启用此端点
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancel-endpoint-btn">取消</button>
+                <button class="btn btn-primary" id="save-endpoint-btn">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑记忆模态框 -->
+    <div class="modal" id="memory-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="memory-modal-title">添加记忆</h3>
+                <button class="btn-close" id="close-memory-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="memory-form">
+                    <input type="hidden" id="memory-id">
+                    <div class="form-group">
+                        <label>记忆内容</label>
+                        <textarea id="memory-content" rows="4" required placeholder="输入要记忆的内容..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancel-memory-btn">取消</button>
+                <button class="btn btn-primary" id="save-memory-btn">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast通知 -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
