@@ -71,7 +71,7 @@ run.bat
 python main.py
 ```
 
-服务默认运行在 `http://localhost:8000`
+服务默认运行在 `http://localhost:8080`
 
 ### 4. 使用
 
@@ -81,7 +81,7 @@ python main.py
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8000/v1",
+    base_url="http://localhost:8080/v1",
     api_key="any-key"  # 代理会使用配置的上游 API Key
 )
 
@@ -161,7 +161,7 @@ print(response.choices[0].message.content)
 
 ### Web 界面
 
-访问 `http://localhost:8000/` 可使用 Web 管理界面查看和管理记忆。
+访问 `http://localhost:8080/` 可使用 Web 管理界面查看和管理记忆。
 
 ## 数据存储
 
