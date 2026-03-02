@@ -14,13 +14,27 @@ class Role(str, Enum):
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
+    TOOL = "tool"
 
 
 class ChatMessage(BaseModel):
     """聊天消息"""
     role: Role = Field(..., description="消息角色")
-    content: str = Field(..., description="消息内容")
+    content: Union[str, List[Dict[str, Any]]] = Field(..., description="消息内容")
     name: Optional[str] = Field(default=None, description="名称(可选)")
+    tool_call_id: Optional[str] = Field(default=None, description="工具调用ID(可选)")
+
+    def get_text_content(self) -> str:
+        """提取纯文本内容（兼容字符串和列表格式）"""
+        if isinstance(self.content, str):
+            return self.content
+        elif isinstance(self.content, list):
+            texts = []
+            for item in self.content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    texts.append(item.get("text", ""))
+            return "\n".join(texts)
+        return ""
 
 
 class MemoryItem(BaseModel):

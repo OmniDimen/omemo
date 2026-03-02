@@ -397,10 +397,11 @@ async def chat_completions(request: Request):
     # 调试：打印系统提示词
     for msg in messages:
         if msg.role == "system":
+            sys_content = msg.get_text_content()
             debug_print(f"\n{'='*50}")
-            debug_print(f"[System Prompt 预览] 长度: {len(msg.content)}")
+            debug_print(f"[System Prompt 预览] 长度: {len(sys_content)}")
             debug_print(f"{'='*50}")
-            debug_print(msg.content[:1000] + "..." if len(msg.content) > 1000 else msg.content)
+            debug_print(sys_content[:1000] + "..." if len(sys_content) > 1000 else sys_content)
             debug_print(f"{'='*50}\n")
             break
     

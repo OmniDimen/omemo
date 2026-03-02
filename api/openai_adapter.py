@@ -73,12 +73,18 @@ class OpenAIAdapter:
     
     def _build_payload(self, request: OpenAIChatRequest) -> Dict[str, Any]:
         """构建请求体"""
+        messages = []
+        for msg in request.messages:
+            msg_dict = {"role": msg.role, "content": msg.content}
+            if hasattr(msg, 'tool_call_id') and msg.tool_call_id:
+                msg_dict["tool_call_id"] = msg.tool_call_id
+            if hasattr(msg, 'name') and msg.name:
+                msg_dict["name"] = msg.name
+            messages.append(msg_dict)
+        
         payload = {
             "model": request.model,
-            "messages": [
-                {"role": msg.role, "content": msg.content}
-                for msg in request.messages
-            ],
+            "messages": messages,
             "temperature": request.temperature,
             "stream": request.stream
         }

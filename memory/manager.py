@@ -380,7 +380,7 @@ class MemoryManager:
         
         original_system = None
         if system_msg_idx >= 0:
-            original_system = messages[system_msg_idx].content
+            original_system = messages[system_msg_idx].get_text_content()
         
         # 准备要注入的记忆
         if memories is None:
@@ -407,5 +407,5 @@ class MemoryManager:
         lines = []
         for msg in recent_messages:
             role_name = "User" if msg.role == "user" else "Assistant" if msg.role == "assistant" else "System"
-            lines.append(f"{role_name}: {msg.content}")
+            lines.append(f"{role_name}: {msg.get_text_content()}")
         return "\n".join(lines)
