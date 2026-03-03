@@ -1,5 +1,7 @@
 # 🤖 Omni Memory × AstrBot 快速接入指南
 
+Author: [Omnitopia](https://github.com/Omnitopia)
+
 > 让你的 AstrBot 机器人拥有长期记忆能力
 
 ---

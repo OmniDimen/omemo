@@ -18,21 +18,6 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# 检查依赖是否安装
-if ! python3 -c "import fastapi" &> /dev/null; then
-    echo "📦 首次运行，正在安装依赖..."
-    python3 -m pip install -r requirements.txt
-    if [ $? -ne 0 ]; then
-        echo "❌ 依赖安装失败"
-        echo ""
-        echo "按任意键退出..."
-        read -n 1
-        exit 1
-    fi
-    echo "✅ 依赖安装完成"
-    echo ""
-fi
-
 # 创建必要的目录
 mkdir -p data config
 

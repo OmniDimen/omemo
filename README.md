@@ -185,6 +185,10 @@ print(response.choices[0].message.content)
 2. **记忆数量**：全量注入模式下，记忆过多会增加 token 消耗，建议定期清理
 3. **思维链模型**：支持自动识别 reasoning_content，思维链中的记忆标签会被忽略
 
+## 更多用途
+
+[接入AstrBot](docs/ASTRBOT_GUIDE.md)
+
 ## 许可证
 
 Apache License 2.0
