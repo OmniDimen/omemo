@@ -20,13 +20,16 @@ class Role(str, Enum):
 class ChatMessage(BaseModel):
     """聊天消息"""
     role: Role = Field(..., description="消息角色")
-    content: Union[str, List[Dict[str, Any]]] = Field(..., description="消息内容")
+    content: Optional[Union[str, List[Dict[str, Any]]]] = Field(default=None, description="消息内容")
     name: Optional[str] = Field(default=None, description="名称(可选)")
     tool_call_id: Optional[str] = Field(default=None, description="工具调用ID(可选)")
     tool_calls: Optional[List[Dict[str, Any]]] = Field(default=None, description="工具调用列表(assistant消息)")
+    reasoning_content: Optional[str] = Field(default=None, description="思考过程(用于DeepSeek R1/V4等模型)")
 
     def get_text_content(self) -> str:
         """提取纯文本内容（兼容字符串和列表格式）"""
+        if not self.content:
+            return ""
         if isinstance(self.content, str):
             return self.content
         elif isinstance(self.content, list):
@@ -152,7 +155,7 @@ class ChatCompletion(BaseModel):
     created: int = Field(...)
     model: str = Field(...)
     choices: List[NonStreamChoice] = Field(default_factory=list)
-    usage: Dict[str, int] = Field(default_factory=dict)
+    usage: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AnthropicDelta(BaseModel):
@@ -168,7 +171,7 @@ class AnthropicStreamChunk(BaseModel):
     delta: Optional[AnthropicDelta] = Field(default=None)
     message: Optional[Dict[str, Any]] = Field(default=None)
     content_block: Optional[Dict[str, Any]] = Field(default=None)
-    usage: Optional[Dict[str, int]] = Field(default=None)
+    usage: Optional[Dict[str, Any]] = Field(default=None)
     stop_reason: Optional[str] = Field(default=None)
 
 

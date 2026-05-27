@@ -4,6 +4,7 @@
 """
 
 import json
+import logging
 import re
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +13,8 @@ import httpx
 from memory.prompts import get_external_summary_prompt, get_rag_injection_prompt
 from memory.manager import MemoryManager
 from models import MemoryItem, MemoryActionItem, MemoryAction
+
+logger = logging.getLogger("omemo.summarizer")
 
 
 class MemorySummarizer:
@@ -77,7 +80,7 @@ class MemorySummarizer:
                 return self._parse_memory_actions(content)
         
         except Exception as e:
-            print(f"总结对话失败: {e}")
+            logger.error("总结对话失败: %s", e)
             return []
     
     async def select_relevant_memories(
@@ -144,7 +147,7 @@ class MemorySummarizer:
                 return selected
         
         except Exception as e:
-            print(f"筛选记忆失败: {e}")
+            logger.error("筛选记忆失败: %s", e)
             # 失败时返回所有记忆
             return available_memories[:max_memories]
     
@@ -187,7 +190,7 @@ class MemorySummarizer:
                         ))
         
         except Exception as e:
-            print(f"解析记忆操作失败: {e}")
+            logger.error("解析记忆操作失败: %s", e)
         
         return actions
     
@@ -211,6 +214,6 @@ class MemorySummarizer:
                 selected_ids = data["selected_memories"]
         
         except Exception as e:
-            print(f"解析筛选记忆失败: {e}")
+            logger.error("解析筛选记忆失败: %s", e)
         
         return selected_ids

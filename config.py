@@ -4,6 +4,7 @@
 """
 
 import json
+import logging
 import os
 import secrets
 import hashlib
@@ -11,6 +12,21 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+
+# ==================== 日志配置 ====================
+
+def setup_logging(debug: bool = False) -> None:
+    """配置全局日志系统"""
+    level = logging.DEBUG if debug else logging.INFO
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    logging.basicConfig(level=level, format=fmt, datefmt=datefmt)
+    # 降低 httpx 的日志级别，避免刷屏
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+# 项目根日志器，所有子模块从此继承
+omemo_logger = logging.getLogger("omemo")
 
 
 class EndpointConfig(BaseModel):
@@ -303,9 +319,9 @@ config = ConfigManager()
 
 
 def debug_print(*args, **kwargs):
-    """调试日志输出，仅在调试模式开启时打印"""
+    """调试日志输出（向后兼容别名，内部使用 logging.debug）"""
     if config.memory_settings.debug_mode:
-        print(*args, **kwargs)
+        omemo_logger.debug(" ".join(str(a) for a in args))
 
 
 def generate_session_key() -> str:

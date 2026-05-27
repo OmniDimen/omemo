@@ -4,6 +4,7 @@
 """
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -12,6 +13,8 @@ from typing import Any, Dict, List, Optional
 from threading import Lock
 
 from models import MemoryItem
+
+logger = logging.getLogger("omemo.storage")
 
 
 class MemoryStorage:
@@ -172,7 +175,7 @@ class MemoryStorage:
                 json.dump(memories, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
-            print(f"导出记忆失败: {e}")
+            logger.error("导出记忆失败: %s", e)
             return False
     
     def import_(self, file_path: str, merge: bool = True) -> bool:
@@ -195,5 +198,5 @@ class MemoryStorage:
             
             return True
         except Exception as e:
-            print(f"导入记忆失败: {e}")
+            logger.error("导入记忆失败: %s", e)
             return False
