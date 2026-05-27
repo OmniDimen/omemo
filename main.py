@@ -4,6 +4,7 @@ Omni Memory - 带记忆功能的API中转站
 """
 
 import json
+import logging
 import re
 import time
 import uuid
@@ -17,7 +18,7 @@ from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from config import config, EndpointConfig, MemorySettings, debug_print
+from config import config, EndpointConfig, MemorySettings, debug_print, setup_logging
 from config import generate_session_key, verify_session_key, set_session_key, clear_session_key
 from models import (
     ChatMessage,
@@ -32,6 +33,10 @@ from memory import MemoryStorage, MemoryManager, MemorySummarizer
 from memory.manager import MemoryAction
 from api import OpenAIAdapter, AnthropicAdapter, APIConverter
 
+
+# 配置日志（应用启动前尽早调用）
+setup_logging(debug=True)
+logger = logging.getLogger("omemo.main")
 
 # 全局状态
 storage: MemoryStorage
@@ -48,7 +53,7 @@ async def lifespan(app: FastAPI):
     storage = MemoryStorage(config.settings.data_dir)
     manager = MemoryManager(storage, config.memory_settings)
     
-    # 如果配置了外接模型，初始化总结器
+    # 如果配置了外接模型，初始化总结器并注入到 manager
     ms = config.memory_settings
     if ms.external_model_endpoint and ms.external_model_api_key and ms.external_model_name:
         summarizer = MemorySummarizer(
@@ -56,16 +61,17 @@ async def lifespan(app: FastAPI):
             api_key=ms.external_model_api_key,
             model=ms.external_model_name
         )
+        manager.summarizer = summarizer
     
-    print(f"🚀 Omni Memory 启动成功")
-    print(f"📁 数据目录: {config.settings.data_dir}")
-    print(f"🧠 记忆模式: {ms.memory_mode}")
-    print(f"💉 注入模式: {ms.injection_mode}")
+    logger.info("🚀 Omni Memory 启动成功")
+    logger.info("📁 数据目录: %s", config.settings.data_dir)
+    logger.info("🧠 记忆模式: %s", ms.memory_mode)
+    logger.info("💉 注入模式: %s", ms.injection_mode)
     
     yield
     
     # 关闭时清理
-    print("🛑 Omni Memory 关闭中...")
+    logger.info("🛑 Omni Memory 关闭中...")
 
 
 # 创建FastAPI应用
@@ -89,30 +95,27 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-
 # ==================== 辅助函数 ====================
 
 def get_adapter_for_model(model: str):
     """根据模型名称获取适配器（支持别名，检测冲突）"""
-    # 检查模型冲突
     conflicts = config.get_model_conflicts()
     if model in conflicts:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"模型 '{model}' 存在冲突，请在「模型列表」中设置别名。冲突端点: {', '.join(conflicts[model])}"
         )
-    
+
     endpoint = config.get_endpoint_by_model(model)
-    
+
     if not endpoint:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"未找到模型 '{model}' 的配置"
         )
-    
-    # 获取实际模型名称（解析别名）
+
     actual_model = config.get_actual_model_name(model)
-    
+
     if endpoint.provider == "openai":
         return OpenAIAdapter(endpoint.url, endpoint.api_key), endpoint, "openai", actual_model
     elif endpoint.provider == "anthropic":
@@ -122,66 +125,6 @@ def get_adapter_for_model(model: str):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"不支持的提供商: {endpoint.provider}"
         )
-
-
-async def select_memories_for_rag(messages: List[ChatMessage]) -> List[MemoryItem]:
-    """RAG模式选择相关记忆"""
-    if not summarizer:
-        # 如果没有配置总结器，返回所有记忆
-        return manager.get_all_memories()
-    
-    all_memories = manager.get_all_memories()
-    if not all_memories:
-        return []
-    
-    # 构建当前对话文本
-    conversation_text = manager.get_conversation_text(messages, last_n=4)
-    
-    # 调用总结器筛选记忆
-    return await summarizer.select_relevant_memories(
-        conversation=conversation_text,
-        available_memories=all_memories,
-        max_memories=config.memory_settings.rag_max_memories
-    )
-
-
-async def external_summarize_memory(messages: List[ChatMessage]):
-    """使用外接模型总结记忆"""
-    if not summarizer:
-        return
-    
-    conversation_text = manager.get_conversation_text(messages, last_n=config.memory_settings.summary_interval)
-    existing_memories = manager.get_all_memories()
-    
-    actions = await summarizer.summarize_conversation(conversation_text, existing_memories)
-    
-    if actions:
-        results = manager.apply_memory_actions(actions)
-        debug_print(f"外接模型总结完成: 添加{results['added']}, 更新{results['updated']}, 删除{results['deleted']}")
-
-
-async def process_builtin_memory_extraction(response_text: str):
-    """处理内置模式的记忆提取"""
-    debug_print(f"[记忆提取] 开始处理响应，长度: {len(response_text)}")
-    
-    # 检查是否包含记忆标签
-    if '<memory>' in response_text:
-        debug_print(f"[记忆提取] 发现<memory>标签")
-    else:
-        debug_print(f"[记忆提取] 未找到<memory>标签")
-    
-    cleaned_text, actions = manager.extract_memory_operations_from_response(response_text)
-    
-    if actions:
-        debug_print(f"[记忆提取] 提取到 {len(actions)} 个记忆操作:")
-        for i, action in enumerate(actions):
-            debug_print(f"  {i+1}. {action.action}: {action.content or action.id}")
-        results = manager.apply_memory_actions(actions)
-        debug_print(f"[记忆提取] 应用结果: 添加{results['added']}, 更新{results['updated']}, 删除{results['deleted']}")
-    else:
-        debug_print(f"[记忆提取] 未提取到任何记忆操作")
-    
-    return cleaned_text
 
 
 # ==================== WebUI路由 ====================
@@ -583,7 +526,7 @@ async def chat_completions(request: Request):
     # 根据注入模式处理记忆
     if config.memory_settings.injection_mode == "rag" and config.memory_settings.memory_mode != "builtin":
         # RAG模式：筛选相关记忆
-        selected_memories = await select_memories_for_rag(messages)
+        selected_memories = await manager.select_memories_for_rag(messages)
         messages = manager.prepare_messages_with_memories(messages, "rag", selected_memories)
     else:
         # 全量模式或内置模式
@@ -600,7 +543,7 @@ async def chat_completions(request: Request):
             debug_print(f"\n{'='*50}")
             debug_print(f"[System Prompt 预览] 长度: {len(sys_content)}")
             debug_print(f"{'='*50}")
-            debug_print(sys_content[:1000] + "..." if len(sys_content) > 1000 else sys_content)
+            debug_print(sys_content[:8000] + "..." if len(sys_content) > 8000 else sys_content)
             debug_print(f"{'='*50}\n")
             break
     
@@ -644,7 +587,7 @@ async def chat_completions(request: Request):
                                 # 检查是否包含</memory>结束标签
                                 if not memory_processed and '</memory>' in text:
                                     debug_print(f"[流式响应] 检测到</memory>结束，开始提取记忆")
-                                    await process_builtin_memory_extraction(full_response)
+                                    await manager.process_builtin_memory_extraction(full_response)
                                     memory_processed = True
                                 
                                 # 只在未开始memory标签时输出
@@ -662,7 +605,7 @@ async def chat_completions(request: Request):
                             debug_print(f"[流式响应] Anthropic 收到 message_stop, 总长度: {len(full_response)}")
                             # 处理内置模式的记忆提取（如果还没处理）
                             if config.memory_settings.memory_mode == "builtin" and not memory_processed:
-                                await process_builtin_memory_extraction(full_response)
+                                await manager.process_builtin_memory_extraction(full_response)
                             
                             yield f"data: {json.dumps({'choices': [{'finish_reason': 'stop'}]}, ensure_ascii=False)}\n\n"
                             yield "data: [DONE]\n\n"
@@ -673,7 +616,7 @@ async def chat_completions(request: Request):
                     if config.memory_settings.memory_mode == "external":
                         manager.conversation_counter += 1
                         if manager.conversation_counter >= config.memory_settings.summary_interval:
-                            await external_summarize_memory(openai_request.messages)
+                            await manager.external_summarize_memory(openai_request.messages)
                             manager.conversation_counter = 0
                 
                 return StreamingResponse(
@@ -695,7 +638,7 @@ async def chat_completions(request: Request):
                         if block.get("type") == "text":
                             response_text += block.get("text", "")
                     
-                    cleaned_text = await process_builtin_memory_extraction(response_text)
+                    cleaned_text = await manager.process_builtin_memory_extraction(response_text)
                     # 更新响应内容
                     if openai_response.choices:
                         openai_response.choices[0].message["content"] = cleaned_text
@@ -704,7 +647,7 @@ async def chat_completions(request: Request):
                 if config.memory_settings.memory_mode == "external":
                     manager.conversation_counter += 1
                     if manager.conversation_counter >= config.memory_settings.summary_interval:
-                        await external_summarize_memory(openai_request.messages)
+                        await manager.external_summarize_memory(openai_request.messages)
                         manager.conversation_counter = 0
                 
                 return JSONResponse(content=openai_response.model_dump())
@@ -879,7 +822,7 @@ async def chat_completions(request: Request):
                     
                     # 处理记忆提取
                     if config.memory_settings.memory_mode == "builtin" and not memory_processed:
-                        await process_builtin_memory_extraction(full_content)
+                        await manager.process_builtin_memory_extraction(full_content)
                     
                     # 发送结束标记
                     if in_memory or tag_buffer:
@@ -890,7 +833,7 @@ async def chat_completions(request: Request):
                     if config.memory_settings.memory_mode == "external":
                         manager.conversation_counter += 1
                         if manager.conversation_counter >= config.memory_settings.summary_interval:
-                            await external_summarize_memory(openai_request.messages)
+                            await manager.external_summarize_memory(openai_request.messages)
                             manager.conversation_counter = 0
                 
                 return StreamingResponse(
@@ -903,7 +846,7 @@ async def chat_completions(request: Request):
                 # 处理内置模式的记忆提取
                 if config.memory_settings.memory_mode == "builtin":
                     response_text = response.choices[0].message.get("content", "") if response.choices else ""
-                    cleaned_text = await process_builtin_memory_extraction(response_text)
+                    cleaned_text = await manager.process_builtin_memory_extraction(response_text)
                     if response.choices:
                         response.choices[0].message["content"] = cleaned_text
                 
@@ -911,7 +854,7 @@ async def chat_completions(request: Request):
                 if config.memory_settings.memory_mode == "external":
                     manager.conversation_counter += 1
                     if manager.conversation_counter >= config.memory_settings.summary_interval:
-                        await external_summarize_memory(openai_request.messages)
+                        await manager.external_summarize_memory(openai_request.messages)
                         manager.conversation_counter = 0
                 
                 return JSONResponse(content=response.model_dump())
@@ -965,7 +908,7 @@ async def anthropic_messages(request: Request):
     messages = openai_request.messages
     
     if config.memory_settings.injection_mode == "rag" and config.memory_settings.memory_mode != "builtin":
-        selected_memories = await select_memories_for_rag(messages)
+        selected_memories = await manager.select_memories_for_rag(messages)
         messages = manager.prepare_messages_with_memories(messages, "rag", selected_memories)
     else:
         all_memories = manager.get_all_memories()
@@ -1025,13 +968,13 @@ async def anthropic_messages(request: Request):
                     
                     # 处理记忆提取
                     if config.memory_settings.memory_mode == "builtin":
-                        await process_builtin_memory_extraction(full_response)
+                        await manager.process_builtin_memory_extraction(full_response)
                     
                     # 外接模型模式
                     if config.memory_settings.memory_mode == "external":
                         manager.conversation_counter += 1
                         if manager.conversation_counter >= config.memory_settings.summary_interval:
-                            await external_summarize_memory(openai_request.messages)
+                            await manager.external_summarize_memory(openai_request.messages)
                             manager.conversation_counter = 0
                 
                 return StreamingResponse(
@@ -1048,7 +991,7 @@ async def anthropic_messages(request: Request):
                         if block.get("type") == "text":
                             response_text += block.get("text", "")
                     
-                    cleaned_text = await process_builtin_memory_extraction(response_text)
+                    cleaned_text = await manager.process_builtin_memory_extraction(response_text)
                     # 更新响应内容
                     for block in response.get("content", []):
                         if block.get("type") == "text":
@@ -1059,7 +1002,7 @@ async def anthropic_messages(request: Request):
                 if config.memory_settings.memory_mode == "external":
                     manager.conversation_counter += 1
                     if manager.conversation_counter >= config.memory_settings.summary_interval:
-                        await external_summarize_memory(openai_request.messages)
+                        await manager.external_summarize_memory(openai_request.messages)
                         manager.conversation_counter = 0
                 
                 return JSONResponse(content=response)

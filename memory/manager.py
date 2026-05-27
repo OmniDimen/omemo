@@ -4,8 +4,9 @@
 """
 
 import json
+import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from datetime import datetime
 
 from memory.storage import MemoryStorage
@@ -15,7 +16,12 @@ from memory.prompts import (
     get_rag_injection_prompt
 )
 from models import MemoryItem, MemoryAction, MemoryActionItem, ChatMessage
-from config import MemorySettings, debug_print
+from config import MemorySettings
+
+if TYPE_CHECKING:
+    from memory.summarizer import MemorySummarizer
+
+logger = logging.getLogger("omemo.manager")
 
 
 class MemoryManager:
@@ -27,6 +33,7 @@ class MemoryManager:
         self.conversation_counter = 0
         self.pending_summaries: List[ChatMessage] = []
         self.current_index_to_id: Dict[int, str] = {}  # 编号到记忆ID的映射
+        self.summarizer: Optional[Any] = None  # 由 main.py 在启动后注入
     
     def get_all_memories(self) -> List[MemoryItem]:
         """获取所有记忆"""
@@ -94,15 +101,11 @@ class MemoryManager:
         
         parts = []
         
-        # 注入当前时间（精确到分钟）
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-        parts.append(f"[当前时间: {current_time}]")
-        
-        # 添加原始系统提示词
+        # 1. 静态部分：添加原始系统提示词（放在最前面，最大化命中缓存）
         if original_system:
             parts.append(original_system)
         
-        # 添加记忆
+        # 2. 动态部分：添加记忆
         if memories:
             memories_text, index_to_id = self.format_memories_for_system(memories)
             memory_section = format_full_injection(memories_text)
@@ -124,17 +127,14 @@ class MemoryManager:
         
         parts = []
         
-        # 注入当前时间（精确到分钟）
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-        parts.append(f"[当前时间: {current_time}]")
-        
+        # 1. 静态部分：添加原始系统提示词（放在最前面，最大化命中缓存）
         if original_system:
             parts.append(original_system)
         
-        # 添加记忆操作指导
+        # 2. 静态部分：添加记忆操作指导
         parts.append(get_builtin_memory_instruction())
         
-        # 添加现有记忆
+        # 3. 动态部分：添加现有记忆
         if memories:
             memories_text, index_to_id = self.format_memories_for_system(memories)
             # 存储编号到ID的映射，供后续解析使用
@@ -152,8 +152,8 @@ class MemoryManager:
         Returns:
             (清理后的响应, 记忆操作列表)
         """
-        debug_print(f"[记忆提取] 原始响应长度: {len(response_text)}")
-        debug_print(f"[记忆提取] 原始响应结尾: {repr(response_text[-200:])}")
+        logger.debug(f"[记忆提取] 原始响应长度: {len(response_text)}")
+        logger.debug(f"[记忆提取] 原始响应结尾: {repr(response_text[-200:])}")
         
         # 首先检查原始响应中是否有完整的 <memory>...</memory> 标签对
         # 只有在确保标签完整且不在思维链内时才提取
@@ -175,10 +175,10 @@ class MemoryManager:
         memory_matches = list(re.finditer(memory_pattern, response_text, re.DOTALL))
         
         if not memory_matches:
-            debug_print("[记忆提取] 未找到完整的<memory>标签对")
+            logger.debug("[记忆提取] 未找到完整的<memory>标签对")
             return response_text, []
         
-        debug_print(f"[记忆提取] 找到 {len(memory_matches)} 个<memory>标签")
+        logger.debug(f"[记忆提取] 找到 {len(memory_matches)} 个<memory>标签")
         
         # 步骤3: 找出不在思维链内的 memory 标签
         valid_memory_matches = []
@@ -188,18 +188,18 @@ class MemoryManager:
             in_thinking = any(start <= match_start < end for start, end in thinking_regions)
             if not in_thinking:
                 valid_memory_matches.append(match)
-                debug_print(f"[记忆提取] 发现有效<memory>标签在位置 {match_start}-{match_end}")
+                logger.debug(f"[记忆提取] 发现有效<memory>标签在位置 {match_start}-{match_end}")
             else:
-                debug_print(f"[记忆提取] 忽略思维链内的<memory>标签在位置 {match_start}-{match_end}")
+                logger.debug(f"[记忆提取] 忽略思维链内的<memory>标签在位置 {match_start}-{match_end}")
         
         if not valid_memory_matches:
-            debug_print("[记忆提取] 所有<memory>标签都在思维链内，忽略")
+            logger.debug("[记忆提取] 所有<memory>标签都在思维链内，忽略")
             return response_text, []
         
         # 步骤4: 解析记忆内容（只处理第一个有效的 memory 标签）
         memory_match = valid_memory_matches[0]
         memory_content = memory_match.group(1).strip()
-        debug_print(f"[记忆提取] 提取记忆内容: {repr(memory_content[:200])}")
+        logger.debug(f"[记忆提取] 提取记忆内容: {repr(memory_content[:200])}")
         
         # 解析记忆条目
         actions = []
@@ -237,7 +237,7 @@ class MemoryManager:
                     action=MemoryAction.DELETE,
                     id=memory_id
                 ))
-                debug_print(f"[记忆提取] 删除记忆: {memory_ref} -> {memory_id}")
+                logger.debug(f"[记忆提取] 删除记忆: {memory_ref} -> {memory_id}")
                 continue
             
             # 检查是否是更新操作
@@ -268,7 +268,7 @@ class MemoryManager:
                         id=memory_id,
                         content=content_part
                     ))
-                    debug_print(f"[记忆提取] 更新记忆: {memory_ref} -> {memory_id}, 内容: {content_part}")
+                    logger.debug(f"[记忆提取] 更新记忆: {memory_ref} -> {memory_id}, 内容: {content_part}")
                 continue
             
             # 添加操作
@@ -277,7 +277,7 @@ class MemoryManager:
             add_match = re.search(r'-\s*(\d+)\.\s*\[\d{4}-\d{2}-\d{2}\]\s*(.+)', line)
             if add_match:
                 # 有编号的是现有记忆，不是新增操作，跳过
-                debug_print(f"[记忆提取] 跳过现有记忆: {line[:50]}")
+                logger.debug(f"[记忆提取] 跳过现有记忆: {line[:50]}")
                 continue
             
             # 真正的添加操作
@@ -289,7 +289,7 @@ class MemoryManager:
                         action=MemoryAction.ADD,
                         content=content
                     ))
-                    debug_print(f"[记忆提取] 添加记忆: {content}")
+                    logger.debug(f"[记忆提取] 添加记忆: {content}")
         
         # 步骤5: 移除所有有效的 memory 标签（从后往前移除，避免位置变化）
         cleaned_response = response_text
@@ -304,8 +304,8 @@ class MemoryManager:
             cleaned_response = cleaned_response[:start] + cleaned_response[end:]
         
         cleaned_response = cleaned_response.strip()
-        debug_print(f"[记忆提取] 清理后响应长度: {len(cleaned_response)}")
-        debug_print(f"[记忆提取] 清理后响应结尾: {repr(cleaned_response[-100:])}")
+        logger.debug(f"[记忆提取] 清理后响应长度: {len(cleaned_response)}")
+        logger.debug(f"[记忆提取] 清理后响应结尾: {repr(cleaned_response[-100:])}")
         
         return cleaned_response, actions
     
@@ -398,6 +398,31 @@ class MemoryManager:
             result_messages[system_msg_idx] = ChatMessage(role="system", content=new_system)
         else:
             result_messages.insert(0, ChatMessage(role="system", content=new_system))
+            
+        # 将当前时间注入到最后一条用户消息中，以保证前面的上下文前缀完美匹配缓存
+        from datetime import datetime
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+        
+        for i in range(len(result_messages) - 1, -1, -1):
+            if result_messages[i].role == "user":
+                last_user_msg = result_messages[i]
+                # Pydantic 默认是浅拷贝，为了不影响原始消息对象，做个新对象
+                new_content = last_user_msg.content
+                if isinstance(new_content, str):
+                    new_content += f"\n\n[当前时间: {current_time}]"
+                elif isinstance(new_content, list):
+                    new_content = list(new_content) # 浅拷贝列表
+                    new_content.append({"type": "text", "text": f"\n\n[当前时间: {current_time}]"})
+                
+                result_messages[i] = ChatMessage(
+                    role=last_user_msg.role,
+                    content=new_content,
+                    name=last_user_msg.name,
+                    tool_call_id=last_user_msg.tool_call_id,
+                    tool_calls=last_user_msg.tool_calls,
+                    reasoning_content=last_user_msg.reasoning_content
+                )
+                break
         
         return result_messages
     
@@ -409,3 +434,64 @@ class MemoryManager:
             role_name = "User" if msg.role == "user" else "Assistant" if msg.role == "assistant" else "System"
             lines.append(f"{role_name}: {msg.get_text_content()}")
         return "\n".join(lines)
+
+    # ==================== 从 main.py 迁移的业务方法 ====================
+
+    async def select_memories_for_rag(self, messages: List[ChatMessage]) -> List[MemoryItem]:
+        """RAG 模式选择相关记忆（原 main.py 中的独立函数）"""
+        if not self.summarizer:
+            return self.get_all_memories()
+
+        all_memories = self.get_all_memories()
+        if not all_memories:
+            return []
+
+        conversation_text = self.get_conversation_text(messages, last_n=4)
+        return await self.summarizer.select_relevant_memories(
+            conversation=conversation_text,
+            available_memories=all_memories,
+            max_memories=self.settings.rag_max_memories,
+        )
+
+    async def external_summarize_memory(self, messages: List[ChatMessage]) -> None:
+        """使用外接模型总结记忆并应用（原 main.py 中的独立函数）"""
+        if not self.summarizer:
+            return
+
+        conversation_text = self.get_conversation_text(
+            messages, last_n=self.settings.summary_interval
+        )
+        existing_memories = self.get_all_memories()
+        actions = await self.summarizer.summarize_conversation(conversation_text, existing_memories)
+
+        if actions:
+            results = self.apply_memory_actions(actions)
+            logger.debug(
+                "外接模型总结完成: 添加%s, 更新%s, 删除%s",
+                results["added"], results["updated"], results["deleted"],
+            )
+
+    async def process_builtin_memory_extraction(self, response_text: str) -> str:
+        """处理内置模式的记忆提取，返回清理后的回复文本（原 main.py 中的独立函数）"""
+        logger.debug("[记忆提取] 开始处理响应，长度: %s", len(response_text))
+
+        if "<memory>" in response_text:
+            logger.debug("[记忆提取] 发现<memory>标签")
+        else:
+            logger.debug("[记忆提取] 未找到<memory>标签")
+
+        cleaned_text, actions = self.extract_memory_operations_from_response(response_text)
+
+        if actions:
+            logger.debug("[记忆提取] 提取到 %s 个记忆操作:", len(actions))
+            for i, action in enumerate(actions):
+                logger.debug("  %s. %s: %s", i + 1, action.action, action.content or action.id)
+            results = self.apply_memory_actions(actions)
+            logger.debug(
+                "[记忆提取] 应用结果: 添加%s, 更新%s, 删除%s",
+                results["added"], results["updated"], results["deleted"],
+            )
+        else:
+            logger.debug("[记忆提取] 未提取到任何记忆操作")
+
+        return cleaned_text

@@ -36,6 +36,20 @@ class OpenAIAdapter:
         response.raise_for_status()
         
         result = response.json()
+        
+        # 尝试打印缓存命中情况
+        try:
+            if "usage" in result:
+                usage_data = result["usage"]
+                prompt_tokens = usage_data.get("prompt_tokens", 0)
+                if "prompt_tokens_details" in usage_data:
+                    cached_tokens = usage_data["prompt_tokens_details"].get("cached_tokens", 0)
+                    if cached_tokens > 0:
+                        hit_rate = (cached_tokens / prompt_tokens * 100) if prompt_tokens > 0 else 0
+                        print(f"\n🎯 [缓存命中] 命中 Token: {cached_tokens} / {prompt_tokens} (命中率: {hit_rate:.1f}%)\n")
+        except Exception:
+            pass
+            
         return ChatCompletion(**result)
     
     async def chat_completions_stream(
@@ -57,6 +71,21 @@ class OpenAIAdapter:
             
             async for line in response.aiter_lines():
                 if line.strip():
+                    # 尝试解析并打印缓存命中情况
+                    if line.startswith("data: ") and not line.startswith("data: [DONE]"):
+                        try:
+                            data = json.loads(line[6:])
+                            if "usage" in data and data["usage"]:
+                                usage_data = data["usage"]
+                                prompt_tokens = usage_data.get("prompt_tokens", 0)
+                                if "prompt_tokens_details" in usage_data:
+                                    cached_tokens = usage_data["prompt_tokens_details"].get("cached_tokens", 0)
+                                    if cached_tokens > 0:
+                                        # 计算命中率
+                                        hit_rate = (cached_tokens / prompt_tokens * 100) if prompt_tokens > 0 else 0
+                                        print(f"\n🎯 [缓存命中] 命中 Token: {cached_tokens} / {prompt_tokens} (命中率: {hit_rate:.1f}%)\n")
+                        except Exception:
+                            pass
                     yield line + "\n\n"
     
     async def list_models(self) -> Dict[str, Any]:
@@ -75,13 +104,17 @@ class OpenAIAdapter:
         """构建请求体"""
         messages = []
         for msg in request.messages:
-            msg_dict = {"role": msg.role, "content": msg.content}
+            # 如果是内容为空（比如被丢弃的图片），填充一个占位符防止上游API报错挂起
+            safe_content = msg.content if msg.content is not None else "[收到不支持解析的图片或空消息]"
+            msg_dict = {"role": msg.role, "content": safe_content}
             if hasattr(msg, 'tool_call_id') and msg.tool_call_id:
                 msg_dict["tool_call_id"] = msg.tool_call_id
             if hasattr(msg, 'name') and msg.name:
                 msg_dict["name"] = msg.name
             if hasattr(msg, 'tool_calls') and msg.tool_calls:
                 msg_dict["tool_calls"] = msg.tool_calls
+            if hasattr(msg, 'reasoning_content') and msg.reasoning_content:
+                msg_dict["reasoning_content"] = msg.reasoning_content
             messages.append(msg_dict)
         
         payload = {
