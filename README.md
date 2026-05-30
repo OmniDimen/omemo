@@ -23,39 +23,17 @@
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 克隆仓库
+
+```bash
+git clone https://github.com/OmniDimen/omemo.git
+cd omemo
+```
+
+### 2. 安装依赖
 
 ```bash
 pip install -r requirements.txt
-```
-
-### 2. 配置
-
-编辑 `config/endpoints.json` 配置上游 API：
-
-```json
-[
-  {
-    "name": "your-provider",
-    "url": "https://api.example.com/v1",
-    "api_key": "your-api-key",
-    "provider": "openai",
-    "models": ["model-1", "model-2"],
-    "enabled": true
-  }
-]
-```
-
-编辑 `config/memory_settings.json` 配置记忆模式：
-
-```json
-{
-  "debug_mode": false,
-  "memory_mode": "builtin",
-  "injection_mode": "full",
-  "summary_interval": 5,
-  "rag_max_memories": 10
-}
 ```
 
 ### 3. 启动服务
@@ -73,7 +51,15 @@ python main.py
 
 服务默认运行在 `http://localhost:8080`
 
-### 4. 使用
+### 4. 初始配置
+
+首次启动时，配置文件尚未创建，访问任意页面会自动跳转到 Setup 引导页面。
+
+按页面提示填写上游 API 端点信息（名称、URL、API Key、提供商类型、模型列表）和记忆模式设置，提交后配置文件会自动生成，无需手动编辑。
+
+> **也可以手动配置：** 如果你更习惯直接编辑配置文件，参见下方 [配置说明](#配置说明) 章节，在 `config/` 目录下创建 `endpoints.json` 和 `memory_settings.json` 后启动即可。
+
+### 5. 使用
 
 将 OpenAI API 的 base_url 改为代理地址即可：
 
