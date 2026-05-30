@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>初始配置 - Omni Memory</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1f2937 0%, #374151 50%, #1f2937 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .setup-container {
+            width: 100%;
+            max-width: 560px;
+            animation: fadeInUp 0.5s ease-out;
+        }
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .setup-card {
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 48px 40px;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+        }
+        .setup-header {
+            text-align: center;
+            margin-bottom: 36px;
+        }
+        .setup-logo {
+            width: 72px;
+            height: 72px;
+            background: linear-gradient(135deg, var(--primary-color) 0%, #0060cc 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            box-shadow: 0 10px 30px -5px rgba(2,128,255,0.4);
+        }
+        .setup-logo i { font-size: 32px; color: white; }
+        .setup-title {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+        .setup-subtitle {
+            color: var(--text-secondary);
+            font-size: 15px;
+            line-height: 1.5;
+        }
+        .setup-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .s-group { display: flex; flex-direction: column; gap: 6px; }
+        .s-group label {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .s-group input, .s-group select {
+            padding: 12px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 10px;
+            font-size: 15px;
+            background: var(--bg-color);
+            color: var(--text-primary);
+            transition: all 0.2s;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .s-group input:focus, .s-group select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 4px rgba(79,70,229,0.1);
+        }
+        .s-row {
+            display: flex;
+            gap: 12px;
+        }
+        .s-row .s-group { flex: 1; }
+        .models-wrap {
+            position: relative;
+        }
+        .models-wrap input { padding-right: 90px; }
+        .fetch-btn {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .fetch-btn:hover { opacity: 0.85; }
+        .fetch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .s-hint {
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-top: 2px;
+        }
+        .setup-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, var(--primary-color) 0%, #0060cc 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .setup-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px -5px rgba(2,128,255,0.4);
+        }
+        .setup-btn:disabled { opacity: 0.7; cursor: not-allowed; transform: none; }
+        .setup-error {
+            background: rgba(239,68,68,0.1);
+            color: var(--danger-color);
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+        .setup-error.show { display: flex; }
+        @media (max-width: 480px) {
+            .setup-card { padding: 32px 24px; }
+            .setup-title { font-size: 24px; }
+            .s-row { flex-direction: column; gap: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="setup-container">
+        <div class="setup-card">
+            <div class="setup-header">
+                <div class="setup-logo">
+                    <i class="fas fa-brain"></i>
+                </div>
+                <h1 class="setup-title">欢迎使用 Omni Memory</h1>
+                <p class="setup-subtitle">配置你的第一个 API 端点以开始使用</p>
+            </div>
+
+            <div class="setup-error" id="setup-error">
+                <i class="fas fa-exclamation-circle"></i>
+                <span id="error-msg"></span>
+            </div>
+
+            <form class="setup-form" id="setup-form">
+                <div class="s-row">
+                    <div class="s-group">
+                        <label>端点名称</label>
+                        <input type="text" id="ep-name" placeholder="例如：OpenAI" required>
+                    </div>
+                    <div class="s-group">
+                        <label>提供商</label>
+                        <select id="ep-provider">
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="s-group">
+                    <label>API 基础 URL</label>
+                    <input type="url" id="ep-url" placeholder="https://api.openai.com/v1" required>
+                </div>
+
+                <div class="s-group">
+                    <label>API 密钥</label>
+                    <input type="password" id="ep-key" placeholder="sk-..." required>
+                </div>
+
+                <div class="s-group">
+                    <label>模型列表</label>
+                    <div class="models-wrap">
+                        <input type="text" id="ep-models" placeholder="gpt-4o,claude-3-opus" required>
+                        <button type="button" class="fetch-btn" id="fetch-btn">
+                            <i class="fas fa-download"></i> 获取
+                        </button>
+                    </div>
+                    <span class="s-hint">逗号分隔，或点击「获取」从端点自动拉取</span>
+                </div>
+
+                <button type="submit" class="setup-btn" id="setup-btn">
+                    <i class="fas fa-rocket"></i>
+                    <span>完成配置</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    const form = document.getElementById('setup-form');
+    const btn = document.getElementById('setup-btn');
+    const errDiv = document.getElementById('setup-error');
+    const errMsg = document.getElementById('error-msg');
+
+    function showErr(msg) { errMsg.textContent = msg; errDiv.classList.add('show'); }
+    function hideErr() { errDiv.classList.remove('show'); }
+
+    document.getElementById('fetch-btn').addEventListener('click', async function() {
+        const url = document.getElementById('ep-url').value.trim();
+        const key = document.getElementById('ep-key').value.trim();
+        const provider = document.getElementById('ep-provider').value;
+        if (!url || !key) { showErr('请先填写 URL 和 API 密钥'); return; }
+
+        this.disabled = true;
+        this.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        hideErr();
+
+        try {
+            const resp = await fetch('/api/models/fetch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, api_key: key, provider })
+            });
+            const data = await resp.json();
+            if (resp.ok && data.models) {
+                document.getElementById('ep-models').value = data.models.join(',');
+            } else {
+                showErr(data.detail || '获取模型列表失败');
+            }
+        } catch (e) {
+            showErr('网络错误: ' + e.message);
+        } finally {
+            this.disabled = false;
+            this.innerHTML = '<i class="fas fa-download"></i> 获取';
+        }
+    });
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        hideErr();
+
+        const name = document.getElementById('ep-name').value.trim();
+        const provider = document.getElementById('ep-provider').value;
+        const url = document.getElementById('ep-url').value.trim();
+        const api_key = document.getElementById('ep-key').value.trim();
+        const ms = document.getElementById('ep-models').value.trim();
+
+        if (!name || !url || !api_key || !ms) { showErr('所有字段均为必填'); return; }
+
+        const models = ms.split(',').map(m => m.trim()).filter(Boolean);
+        if (!models.length) { showErr('至少需要一个模型'); return; }
+
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>配置中...</span>';
+
+        try {
+            const resp = await fetch('/api/setup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, provider, url, api_key, models })
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                window.location.href = '/';
+            } else {
+                showErr(data.detail || '配置失败');
+            }
+        } catch (e) {
+            showErr('网络错误: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-rocket"></i> <span>完成配置</span>';
+        }
+    });
+    </script>
+</body>
+</html>

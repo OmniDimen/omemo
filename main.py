@@ -91,6 +91,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Setup守卫：未配置端点时重定向到初始配置页
+@app.middleware("http")
+async def setup_guard(request: Request, call_next):
+    path = request.url.path
+    if path.startswith(("/static", "/setup", "/api/setup", "/api/models/fetch", "/favicon", "/health")):
+        return await call_next(request)
+    if not config.endpoints:
+        from starlette.responses import RedirectResponse
+        return RedirectResponse("/setup")
+    return await call_next(request)
+
+
 # 静态文件和模板
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
@@ -132,13 +145,64 @@ def get_adapter_for_model(model: str):
 @app.get("/", response_class=HTMLResponse)
 async def webui(request: Request):
     """WebUI首页"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     """登录页面"""
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html")
+
+
+
+# ==================== 首次配置 ====================
+
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_page(request: Request):
+    """首次配置页面"""
+    if config.endpoints:
+        from starlette.responses import RedirectResponse
+        return RedirectResponse("/")
+    return templates.TemplateResponse(request, "setup.html")
+
+
+@app.post("/api/setup")
+async def do_setup(data: dict):
+    """首次配置 - 创建第一个端点"""
+    if config.endpoints:
+        raise HTTPException(status_code=400, detail="已完成初始配置，请在管理页面中添加更多端点")
+
+    name = data.get("name", "").strip()
+    provider = data.get("provider", "openai")
+    url = data.get("url", "").strip()
+    api_key = data.get("api_key", "").strip()
+    models_raw = data.get("models", [])
+
+    if not name or not url or not api_key:
+        raise HTTPException(status_code=400, detail="名称、URL和API密钥为必填项")
+
+    if isinstance(models_raw, str):
+        models = [m.strip() for m in models_raw.split(",") if m.strip()]
+    else:
+        models = models_raw
+
+    if not models:
+        raise HTTPException(status_code=400, detail="至少需要一个模型")
+
+    endpoint = EndpointConfig(
+        name=name,
+        provider=provider,
+        url=url,
+        api_key=api_key,
+        models=models,
+        enabled=True
+    )
+
+    if not config.add_endpoint(endpoint):
+        raise HTTPException(status_code=400, detail="添加端点失败")
+
+    config.save_memory_settings()
+    return {"success": True}
 
 
 # ==================== 管理API ====================
