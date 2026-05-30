@@ -36,6 +36,10 @@
                     <span>记忆管理</span>
                     <span class="badge" id="memory-count">0</span>
                 </a>
+                <a href="#personas" class="nav-item" data-section="personas">
+                    <i class="fas fa-masks-theater"></i>
+                    <span>人格管理</span>
+                </a>
                 <a href="#general-settings" class="nav-item" data-section="general-settings">
                     <i class="fas fa-sliders-h"></i>
                     <span>设置</span>
@@ -266,6 +270,20 @@
                 </div>
             </section>
 
+            <!-- 人格管理页面 -->
+            <section id="personas-section" class="section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>人格管理</h2>
+                        <button class="btn btn-primary" id="add-persona-btn">
+                            <i class="fas fa-plus"></i> 添加人格
+                        </button>
+                    </div>
+                    <div class="personas-grid" id="personas-grid">
+                    </div>
+                </div>
+            </section>
+
             <!-- 通用设置页面 -->
             <section id="general-settings-section" class="section">
                 <div class="card">
@@ -485,6 +503,55 @@
     <!-- Toast通知 -->
     <div class="toast-container" id="toast-container"></div>
 
+    <!-- 人格编辑模态框 -->
+    <div class="modal" id="persona-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="persona-modal-title">添加人格</h3>
+                <button class="btn-close" id="close-persona-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="persona-form">
+                    <input type="hidden" id="persona-id">
+                    <div class="form-group">
+                        <label>名称</label>
+                        <input type="text" id="persona-name" required placeholder="例如：安安">
+                    </div>
+                    <div class="form-group">
+                        <label>描述（可选）</label>
+                        <input type="text" id="persona-description" placeholder="简短描述">
+                    </div>
+                    <div class="form-group">
+                        <label>System Prompt（客户端未设system时生效）</label>
+                        <textarea id="persona-system-prompt" rows="6" placeholder="你是..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>绑定模型（可选）</label>
+                        <input type="text" id="persona-model" placeholder="例如：claude-sonnet-4-6">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancel-persona-btn">取消</button>
+                <button class="btn btn-primary" id="save-persona-btn">保存</button>
+            </div>
+        </div>
+    </div>
+    <style>
+    .personas-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;padding:16px}
+    .persona-card{background:var(--card-bg,#1e1e2e);border:1px solid var(--border-color,#333);border-radius:12px;padding:20px;transition:border-color .2s}
+    .persona-card.active{border-color:var(--primary-color,#6366f1);box-shadow:0 0 0 1px var(--primary-color,#6366f1)}
+    .persona-card .p-name{font-size:18px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+    .persona-card .p-badge{font-size:11px;background:var(--primary-color,#6366f1);color:#fff;padding:2px 8px;border-radius:10px}
+    .persona-card .p-desc{color:var(--text-secondary,#888);font-size:13px;margin-bottom:8px}
+    .persona-card .p-model{font-family:monospace;font-size:12px;color:var(--text-secondary,#888);background:var(--bg-color,#111);padding:2px 8px;border-radius:4px;display:inline-block;margin-bottom:12px}
+    .persona-card .p-preview{font-size:12px;color:var(--text-secondary,#888);max-height:60px;overflow:hidden;margin-bottom:16px;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+    .persona-card .p-actions{display:flex;gap:8px}
+    .persona-card .p-actions button{flex:1}
+    .persona-empty{text-align:center;padding:60px 20px;color:var(--text-secondary,#888)}
+    .persona-empty i{font-size:48px;margin-bottom:16px;display:block}
+    </style>
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/persona.js"></script>
 </body>
 </html>

@@ -30,7 +30,6 @@ from models import (
     ModelInfo,
 )
 from memory import MemoryStorage, MemoryManager, MemorySummarizer
-from persona import PersonaManager
 from memory.manager import MemoryAction
 from api import OpenAIAdapter, AnthropicAdapter, APIConverter
 
@@ -43,18 +42,16 @@ logger = logging.getLogger("omemo.main")
 storage: MemoryStorage
 manager: MemoryManager
 summarizer: Optional[MemorySummarizer] = None
-persona_manager: PersonaManager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    global storage, manager, summarizer, persona_manager
+    global storage, manager, summarizer
     
     # 启动时初始化
     storage = MemoryStorage(config.settings.data_dir)
     manager = MemoryManager(storage, config.memory_settings)
-    persona_manager = PersonaManager(config.settings.data_dir)
     
     # 如果配置了外接模型，初始化总结器并注入到 manager
     ms = config.memory_settings
@@ -434,60 +431,6 @@ async def get_memory_stats():
         "total": len(memories),
         "recent": len([m for m in memories if m.created_at and m.created_at.startswith(time.strftime("%Y-%m"))])
     }
-
-
-
-# ==================== 人格管理API ====================
-
-@app.get("/personas", response_class=HTMLResponse)
-async def personas_page(request: Request):
-    return templates.TemplateResponse(request, "personas.html")
-
-
-@app.get("/api/personas")
-async def get_personas():
-    return persona_manager.get_all()
-
-
-@app.get("/api/personas/active")
-async def get_active_persona():
-    p = persona_manager.get_active()
-    return p if p else {"active": None}
-
-
-@app.post("/api/personas")
-async def add_persona(data: Dict[str, str]):
-    name = data.get("name", "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="名称不能为空")
-    return persona_manager.add(
-        name=name,
-        system_prompt=data.get("system_prompt", ""),
-        model=data.get("model", ""),
-        description=data.get("description", "")
-    )
-
-
-@app.put("/api/personas/{pid}")
-async def update_persona(pid: str, data: Dict[str, str]):
-    result = persona_manager.update(pid, **data)
-    if not result:
-        raise HTTPException(status_code=404, detail="人格不存在")
-    return result
-
-
-@app.delete("/api/personas/{pid}")
-async def delete_persona(pid: str):
-    if not persona_manager.delete(pid):
-        raise HTTPException(status_code=404, detail="人格不存在")
-    return {"success": True}
-
-
-@app.post("/api/personas/{pid}/activate")
-async def activate_persona(pid: str):
-    if not persona_manager.set_active(pid):
-        raise HTTPException(status_code=404, detail="人格不存在")
-    return {"success": True}
 
 
 # ==================== 登录认证API ====================
