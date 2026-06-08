@@ -8,7 +8,10 @@ const state = {
     memorySettings: {},
     currentSection: 'endpoints',
     isLoggedIn: false,
-    loginEnabled: false
+    loginEnabled: false,
+    // 记忆按人格分组
+    memoryPersonaFilter: null, // null=全部, ''=未绑定, 'xxx'=persona_id
+    memoryPersonaGroups: []
 };
 
 // DOM 元素
@@ -74,6 +77,7 @@ function initElements() {
     elements.searchBtn = document.getElementById('search-btn');
     elements.addMemoryBtn = document.getElementById('add-memory-btn');
     elements.memoryCount = document.getElementById('memory-count');
+    elements.memoryPersonaTabs = document.getElementById('memory-persona-tabs');
     elements.memoryModal = document.getElementById('memory-modal');
     elements.memoryForm = document.getElementById('memory-form');
     elements.memoryModalTitle = document.getElementById('memory-modal-title');
@@ -89,6 +93,11 @@ function initElements() {
     elements.loginToggle = document.getElementById('login-toggle');
     elements.loginActions = document.getElementById('login-actions');
     elements.resetKeyBtn = document.getElementById('reset-key-btn');
+
+    // 人格存储后端
+    elements.personaBackendInputs = document.querySelectorAll('input[name="persona-backend"]');
+    elements.migratePersonaBtn = document.getElementById('migrate-persona-btn');
+    elements.migrateStatus = document.getElementById('migrate-status');
     
     // Session Key 弹窗
     elements.sessionKeyModal = document.getElementById('session-key-modal');
@@ -238,6 +247,16 @@ function bindEvents() {
     
     // 刷新
     elements.refreshBtn.addEventListener('click', loadAllData);
+
+    // 人格存储后端切换
+    if (elements.personaBackendInputs && elements.personaBackendInputs.length) {
+        elements.personaBackendInputs.forEach(function(input) {
+            input.addEventListener('change', updateMigrateBtn);
+        });
+    }
+    if (elements.migratePersonaBtn) {
+        elements.migratePersonaBtn.addEventListener('click', migratePersonaBackend);
+    }
 }
 
 // 填充端点下拉框
@@ -330,6 +349,7 @@ function switchSection(section) {
     } else if (section === 'memory-settings') {
         loadMemorySettings();
     } else if (section === 'memories') {
+        loadMemoryPersonaTabs();
         loadMemories();
     } else if (section === 'general-settings') {
         loadGeneralSettings();
@@ -342,7 +362,8 @@ async function loadAllData() {
         loadEndpoints(),
         loadModels(),
         loadMemorySettings(),
-        loadMemories()
+        loadMemories(),
+        loadMemoryPersonaTabs()
     ]);
     // 通用设置使用同一接口，在memorySettings加载后更新
     updateGeneralSettingsUI();
@@ -761,6 +782,14 @@ function updateGeneralSettingsUI() {
         elements.loginToggle.checked = state.memorySettings.login_enabled || false;
         updateLoginActionsVisibility();
     }
+    // 人格存储后端
+    if (elements.personaBackendInputs && elements.personaBackendInputs.length) {
+        var currentBackend = state.memorySettings.persona_backend || 'json';
+        elements.personaBackendInputs.forEach(function(input) {
+            input.checked = (input.value === currentBackend);
+        });
+        updateMigrateBtn();
+    }
 }
 
 // 更新登录操作按钮可见性
@@ -772,20 +801,29 @@ function updateLoginActionsVisibility() {
 
 // 保存通用设置
 async function saveGeneralSettings() {
+    // 获取当前选中的人格后端
+    var selectedBackend = 'json';
+    if (elements.personaBackendInputs && elements.personaBackendInputs.length) {
+        elements.personaBackendInputs.forEach(function(input) {
+            if (input.checked) selectedBackend = input.value;
+        });
+    }
+
     const settings = {
         ...state.memorySettings,
-        debug_mode: elements.debugModeToggle.checked
+        debug_mode: elements.debugModeToggle.checked,
+        persona_backend: selectedBackend
     };
-    
+
     try {
         const response = await fetch('/api/config/memory', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(settings)
         });
-        
+
         if (!response.ok) throw new Error('保存失败');
-        
+
         showToast('设置保存成功', 'success');
         state.memorySettings = settings;
     } catch (error) {
@@ -890,8 +928,11 @@ function copySessionKey() {
 async function loadMemories(keyword = '') {
     try {
         let url = '/api/memories';
-        if (keyword) url += `?keyword=${encodeURIComponent(keyword)}`;
-        
+        const params = [];
+        if (keyword) params.push(`keyword=${encodeURIComponent(keyword)}`);
+        if (state.memoryPersonaFilter !== null) params.push(`persona_id=${encodeURIComponent(state.memoryPersonaFilter)}`);
+        if (params.length) url += '?' + params.join('&');
+
         const response = await fetch(url);
         if (!response.ok) throw new Error('加载失败');
         state.memories = await response.json();
@@ -900,6 +941,66 @@ async function loadMemories(keyword = '') {
     } catch (error) {
         showToast('加载记忆失败', 'error');
     }
+}
+
+// 加载记忆人格分组标签
+async function loadMemoryPersonaTabs() {
+    try {
+        const [groupsRes, personasRes] = await Promise.all([
+            fetch('/api/memories/by-persona'),
+            fetch('/api/personas')
+        ]);
+        if (!groupsRes.ok || !personasRes.ok) throw new Error('加载失败');
+
+        const groups = await groupsRes.json();
+        const personas = await personasRes.json();
+        state.memoryPersonaGroups = groups;
+
+        const totalCount = groups.reduce(function(sum, g) { return sum + g.memories.length; }, 0);
+
+        // 构建 tab
+        var tabsHtml = '<button class="memory-tab' + (state.memoryPersonaFilter === null ? ' active' : '') + '" data-persona-id="__all__">全部<span class="tab-count">' + totalCount + '</span></button>';
+
+        // 有 persona 的分组（按 persona 名称排序）
+        groups.forEach(function(g) {
+            var isActive = state.memoryPersonaFilter === g.persona_id ||
+                           (state.memoryPersonaFilter === '' && g.persona_id === null);
+            var pid = g.persona_id || '';
+            tabsHtml += '<button class="memory-tab' + (isActive ? ' active' : '') + '" data-persona-id="' + escHtml(pid) + '">' + escHtml(g.persona_name) + '<span class="tab-count">' + g.memories.length + '</span></button>';
+        });
+
+        // 未绑定人格 tab（如果有）
+        var unbound = groups.find(function(g) { return g.persona_id === null; });
+        if (unbound && !groups.find(function(g) { return g.persona_id === null && state.memoryPersonaFilter === ''; })) {
+            // 已经在上面的循环中渲染了，不需要重复
+        }
+
+        if (elements.memoryPersonaTabs) {
+            elements.memoryPersonaTabs.innerHTML = tabsHtml;
+
+            // 绑定点击事件
+            elements.memoryPersonaTabs.querySelectorAll('.memory-tab').forEach(function(tab) {
+                tab.addEventListener('click', function() {
+                    var pid = tab.dataset.personaId;
+                    if (pid === '__all__') {
+                        state.memoryPersonaFilter = null;
+                    } else {
+                        state.memoryPersonaFilter = pid;
+                    }
+                    loadMemoryPersonaTabs();
+                    loadMemories();
+                });
+            });
+        }
+    } catch (error) {
+        console.error('加载记忆人格分组失败', error);
+    }
+}
+
+function escHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // 渲染记忆列表

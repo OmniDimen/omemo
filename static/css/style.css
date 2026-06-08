@@ -492,7 +492,7 @@ body {
 }
 
 .toggle-item input[type="checkbox"]:checked + .toggle-slider {
-    background-color: var(--primary-color);
+    background-color: #10b981;
 }
 
 .toggle-item input[type="checkbox"]:checked + .toggle-slider::after {
@@ -500,23 +500,23 @@ body {
 }
 
 .toggle-item input[type="checkbox"]:checked ~ .toggle-content strong {
-    color: var(--primary-color);
+    color: #10b981;
 }
 
 .toggle-item:has(input[type="checkbox"]:checked) {
-    border-color: var(--primary-color);
-    background-color: rgba(79, 70, 229, 0.05);
+    border-color: #10b981;
+    background-color: rgba(16, 185, 129, 0.05);
 }
 
 .toggle-slider {
     width: 44px;
     height: 24px;
-    background-color: var(--border-color);
+    background-color: #ccc;
     border-radius: 12px;
     position: relative;
     flex-shrink: 0;
     margin-top: 2px;
-    transition: background-color 0.2s;
+    transition: background-color 0.3s;
 }
 
 .toggle-slider::after {
@@ -528,8 +528,8 @@ body {
     height: 20px;
     background-color: white;
     border-radius: 50%;
-    transition: transform 0.2s;
-    box-shadow: var(--shadow);
+    transition: transform 0.3s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .toggle-content {
@@ -1015,4 +1015,178 @@ body {
     .sidebar-overlay.show {
         display: block;
     }
+}
+
+/* ==================== 人格管理 ==================== */
+
+.personas-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+    padding: 16px;
+}
+
+.persona-card {
+    background: var(--card-bg, #1e1e2e);
+    border: 1px solid var(--border-color, #333);
+    border-radius: 12px;
+    padding: 20px;
+    transition: border-color 0.2s;
+}
+
+.persona-card.active {
+    border-color: var(--primary-color, #6366f1);
+    box-shadow: 0 0 0 1px var(--primary-color, #6366f1);
+}
+
+.persona-card .p-name {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.persona-card .p-badge {
+    font-size: 11px;
+    background: var(--primary-color, #6366f1);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.persona-card .p-desc {
+    color: var(--text-secondary, #888);
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+
+.persona-card .p-model {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-secondary, #888);
+    background: var(--bg-color, #111);
+    padding: 2px 8px;
+    border-radius: 4px;
+    display: inline-block;
+    margin-bottom: 12px;
+}
+
+.persona-card .p-preview {
+    font-size: 12px;
+    color: var(--text-secondary, #888);
+    max-height: 60px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.persona-card .p-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.persona-card .p-actions button {
+    flex: 1;
+}
+
+.persona-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-secondary, #888);
+}
+
+.persona-empty i {
+    font-size: 48px;
+    margin-bottom: 16px;
+    display: block;
+}
+
+/* Toggle Switch - iOS 风格（人格卡片用） */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-switch .toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #ccc;
+    border-radius: 24px;
+    transition: background 0.3s;
+}
+
+.toggle-switch .toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 2px;
+    bottom: 2px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.3s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background: #10b981;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+}
+
+/* ==================== 记忆人格分组标签 ==================== */
+
+.memory-tabs {
+    display: flex;
+    gap: 8px;
+    padding: 0 16px 16px;
+    flex-wrap: wrap;
+}
+
+.memory-tab {
+    padding: 6px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--border-color, #333);
+    background: transparent;
+    color: var(--text-secondary, #888);
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.memory-tab:hover {
+    border-color: var(--primary-color, #6366f1);
+    color: var(--primary-color, #6366f1);
+}
+
+.memory-tab.active {
+    background: var(--primary-color, #6366f1);
+    color: #fff;
+    border-color: var(--primary-color, #6366f1);
+}
+
+.memory-tab .tab-count {
+    margin-left: 4px;
+    font-size: 11px;
+    opacity: 0.7;
 }

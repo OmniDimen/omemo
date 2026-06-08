@@ -27,25 +27,32 @@ logger = logging.getLogger("omemo.manager")
 class MemoryManager:
     """记忆管理器"""
     
-    def __init__(self, storage: MemoryStorage, settings: MemorySettings):
+    def __init__(self, storage: MemoryStorage, settings: MemorySettings, persona_manager=None):
         self.storage = storage
         self.settings = settings
         self.conversation_counter = 0
         self.pending_summaries: List[ChatMessage] = []
         self.current_index_to_id: Dict[int, str] = {}  # 编号到记忆ID的映射
         self.summarizer: Optional[Any] = None  # 由 main.py 在启动后注入
+        self.persona_manager = persona_manager
     
-    def get_all_memories(self) -> List[MemoryItem]:
-        """获取所有记忆"""
-        return self.storage.get_all()
+    def _active_pid(self):
+        if self.persona_manager:
+            p = self.persona_manager.get_active()
+            return p["id"] if p else None
+        return None
+
+    def get_all_memories(self, persona_id=None) -> List[MemoryItem]:
+        """获取所有记忆，persona_id=None 表示不过滤（返回全部）"""
+        return self.storage.get_all(persona_id=persona_id)
     
     def get_memory_by_id(self, memory_id: str) -> Optional[MemoryItem]:
         """根据ID获取记忆"""
         return self.storage.get_by_id(memory_id)
     
-    def add_memory(self, content: str, source: str = "manual") -> MemoryItem:
+    def add_memory(self, content: str, source: str = "manual", persona_id=None) -> MemoryItem:
         """手动添加记忆"""
-        return self.storage.add(content=content, source=source)
+        return self.storage.add(content=content, source=source, persona_id=persona_id)
     
     def update_memory(self, memory_id: str, content: str) -> Optional[MemoryItem]:
         """更新记忆"""
@@ -57,7 +64,7 @@ class MemoryManager:
     
     def search_memories(self, keyword: str) -> List[MemoryItem]:
         """搜索记忆"""
-        return self.storage.search(keyword)
+        return self.storage.search(keyword, persona_id=self._active_pid())
     
     def format_memories_for_system(self, memories: List[MemoryItem]) -> Tuple[str, Dict[int, str]]:
         """
@@ -309,10 +316,10 @@ class MemoryManager:
         
         return cleaned_response, actions
     
-    def apply_memory_actions(self, actions: List[MemoryActionItem]) -> Dict[str, Any]:
+    def apply_memory_actions(self, actions: List[MemoryActionItem], persona_id=None) -> Dict[str, Any]:
         """
         应用记忆操作
-        
+
         Returns:
             操作结果统计
         """
@@ -322,13 +329,14 @@ class MemoryManager:
             "deleted": 0,
             "errors": []
         }
-        
+
         for action in actions:
             try:
                 if action.action == MemoryAction.ADD:
                     self.storage.add(
                         content=action.content,
-                        source="builtin_extraction"
+                        source="builtin_extraction",
+                        persona_id=persona_id
                     )
                     results["added"] += 1
                 
@@ -437,12 +445,12 @@ class MemoryManager:
 
     # ==================== 从 main.py 迁移的业务方法 ====================
 
-    async def select_memories_for_rag(self, messages: List[ChatMessage]) -> List[MemoryItem]:
+    async def select_memories_for_rag(self, messages: List[ChatMessage], persona_id=None) -> List[MemoryItem]:
         """RAG 模式选择相关记忆（原 main.py 中的独立函数）"""
         if not self.summarizer:
-            return self.get_all_memories()
+            return self.get_all_memories(persona_id=persona_id)
 
-        all_memories = self.get_all_memories()
+        all_memories = self.get_all_memories(persona_id=persona_id)
         if not all_memories:
             return []
 
@@ -453,7 +461,7 @@ class MemoryManager:
             max_memories=self.settings.rag_max_memories,
         )
 
-    async def external_summarize_memory(self, messages: List[ChatMessage]) -> None:
+    async def external_summarize_memory(self, messages: List[ChatMessage], persona_id=None) -> None:
         """使用外接模型总结记忆并应用（原 main.py 中的独立函数）"""
         if not self.summarizer:
             return
@@ -461,7 +469,7 @@ class MemoryManager:
         conversation_text = self.get_conversation_text(
             messages, last_n=self.settings.summary_interval
         )
-        existing_memories = self.get_all_memories()
+        existing_memories = self.get_all_memories(persona_id=persona_id)
         actions = await self.summarizer.summarize_conversation(conversation_text, existing_memories)
 
         if actions:
@@ -471,7 +479,7 @@ class MemoryManager:
                 results["added"], results["updated"], results["deleted"],
             )
 
-    async def process_builtin_memory_extraction(self, response_text: str) -> str:
+    async def process_builtin_memory_extraction(self, response_text: str, persona_id=None) -> str:
         """处理内置模式的记忆提取，返回清理后的回复文本（原 main.py 中的独立函数）"""
         logger.debug("[记忆提取] 开始处理响应，长度: %s", len(response_text))
 
@@ -486,7 +494,7 @@ class MemoryManager:
             logger.debug("[记忆提取] 提取到 %s 个记忆操作:", len(actions))
             for i, action in enumerate(actions):
                 logger.debug("  %s. %s: %s", i + 1, action.action, action.content or action.id)
-            results = self.apply_memory_actions(actions)
+            results = self.apply_memory_actions(actions, persona_id=persona_id)
             logger.debug(
                 "[记忆提取] 应用结果: 添加%s, 更新%s, 删除%s",
                 results["added"], results["updated"], results["deleted"],

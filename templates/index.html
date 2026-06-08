@@ -264,6 +264,9 @@
                             <i class="fas fa-plus"></i> 添加记忆
                         </button>
                     </div>
+                    <div class="memory-tabs" id="memory-persona-tabs">
+                        <!-- 动态填充 -->
+                    </div>
                     <div class="memories-list" id="memories-list">
                         <!-- 动态填充 -->
                     </div>
@@ -329,6 +332,35 @@
                                         <small>开启后将在控制台打印详细日志，便于排查问题</small>
                                     </div>
                                 </label>
+                            </div>
+                        </div>
+
+                        <!-- 人格存储后端 -->
+                        <div class="form-group">
+                            <label class="form-label">人格存储后端</label>
+                            <div class="radio-group">
+                                <label class="radio-item">
+                                    <input type="radio" name="persona-backend" value="json" checked>
+                                    <span class="radio-mark"></span>
+                                    <div class="radio-content">
+                                        <strong>JSON 文件</strong>
+                                        <small>数据存储在 data/personas.json，简单轻量</small>
+                                    </div>
+                                </label>
+                                <label class="radio-item">
+                                    <input type="radio" name="persona-backend" value="sqlite">
+                                    <span class="radio-mark"></span>
+                                    <div class="radio-content">
+                                        <strong>SQLite 数据库</strong>
+                                        <small>数据存储在 data/omemo.db，适合大量数据</small>
+                                    </div>
+                                </label>
+                            </div>
+                            <div style="margin-top: 16px;">
+                                <button type="button" class="btn btn-secondary" id="migrate-persona-btn" disabled>
+                                    <i class="fas fa-exchange-alt"></i> 迁移数据到另一后端
+                                </button>
+                                <span id="migrate-status" style="margin-left: 12px; font-size: 13px; color: var(--text-secondary);">切换后端后可迁移数据</span>
                             </div>
                         </div>
                     </div>
@@ -526,8 +558,10 @@
                         <textarea id="persona-system-prompt" rows="6" placeholder="你是..."></textarea>
                     </div>
                     <div class="form-group">
-                        <label>绑定模型（可选）</label>
-                        <input type="text" id="persona-model" placeholder="例如：claude-sonnet-4-6">
+                        <label>绑定模型</label>
+                        <select id="persona-model" required>
+                            <option value="">-- 请选择模型 --</option>
+                        </select>
                     </div>
                 </form>
             </div>
@@ -537,20 +571,6 @@
             </div>
         </div>
     </div>
-    <style>
-    .personas-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;padding:16px}
-    .persona-card{background:var(--card-bg,#1e1e2e);border:1px solid var(--border-color,#333);border-radius:12px;padding:20px;transition:border-color .2s}
-    .persona-card.active{border-color:var(--primary-color,#6366f1);box-shadow:0 0 0 1px var(--primary-color,#6366f1)}
-    .persona-card .p-name{font-size:18px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px}
-    .persona-card .p-badge{font-size:11px;background:var(--primary-color,#6366f1);color:#fff;padding:2px 8px;border-radius:10px}
-    .persona-card .p-desc{color:var(--text-secondary,#888);font-size:13px;margin-bottom:8px}
-    .persona-card .p-model{font-family:monospace;font-size:12px;color:var(--text-secondary,#888);background:var(--bg-color,#111);padding:2px 8px;border-radius:4px;display:inline-block;margin-bottom:12px}
-    .persona-card .p-preview{font-size:12px;color:var(--text-secondary,#888);max-height:60px;overflow:hidden;margin-bottom:16px;line-height:1.5;white-space:pre-wrap;word-break:break-all}
-    .persona-card .p-actions{display:flex;gap:8px}
-    .persona-card .p-actions button{flex:1}
-    .persona-empty{text-align:center;padding:60px 20px;color:var(--text-secondary,#888)}
-    .persona-empty i{font-size:48px;margin-bottom:16px;display:block}
-    </style>
     <script src="/static/js/app.js"></script>
     <script src="/static/js/persona.js"></script>
 </body>

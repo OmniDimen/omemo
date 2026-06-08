@@ -30,7 +30,7 @@ from models import (
     ModelInfo,
 )
 from memory import MemoryStorage, MemoryManager, MemorySummarizer
-from persona import PersonaManager
+from persona import create_persona_store
 from memory.manager import MemoryAction
 from api import OpenAIAdapter, AnthropicAdapter, APIConverter
 
@@ -43,18 +43,21 @@ logger = logging.getLogger("omemo.main")
 storage: MemoryStorage
 manager: MemoryManager
 summarizer: Optional[MemorySummarizer] = None
-persona_manager: PersonaManager
+persona_store = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    global storage, manager, summarizer, persona_manager
+    global storage, manager, summarizer, persona_store
     
     # 启动时初始化
     storage = MemoryStorage(config.settings.data_dir)
-    manager = MemoryManager(storage, config.memory_settings)
-    persona_manager = PersonaManager(config.settings.data_dir)
+    persona_store = create_persona_store(
+    backend=config.memory_settings.persona_backend,
+    data_dir=config.settings.data_dir
+)
+    manager = MemoryManager(storage, config.memory_settings, persona_manager=persona_store)
     
     # 如果配置了外接模型，初始化总结器并注入到 manager
     ms = config.memory_settings
@@ -321,14 +324,40 @@ async def update_memory_settings(settings: MemorySettings):
 # ==================== 记忆管理API ====================
 
 @app.get("/api/memories")
-async def get_memories(keyword: Optional[str] = None):
-    """获取所有记忆或搜索记忆"""
+async def get_memories(keyword: Optional[str] = None, persona_id: Optional[str] = None):
+    """获取所有记忆或搜索记忆，支持按人格过滤"""
     if keyword:
         memories = manager.search_memories(keyword)
     else:
-        memories = manager.get_all_memories()
-    
+        memories = manager.get_all_memories(persona_id=persona_id)
+
     return [m.model_dump() for m in memories]
+
+
+@app.get("/api/memories/by-persona")
+async def get_memories_by_persona():
+    """按人格分组返回记忆"""
+    all_memories = manager.get_all_memories(persona_id=None)
+    personas = persona_store.get_all()
+    persona_map = {p["id"]: p["name"] for p in personas}
+
+    groups: Dict[str, Dict] = {}
+    for m in all_memories:
+        pid = m.persona_id or ""
+        if pid not in groups:
+            groups[pid] = {
+                "persona_id": pid or None,
+                "persona_name": persona_map.get(pid, "未绑定人格") if pid else "未绑定人格",
+                "memories": []
+            }
+        groups[pid]["memories"].append(m.model_dump())
+
+    # 排序：有 persona_id 的在前，按 persona 名称排序；未绑定的放最后
+    sorted_groups = sorted(
+        groups.values(),
+        key=lambda g: (g["persona_id"] is None, g["persona_name"])
+    )
+    return sorted_groups
 
 
 @app.post("/api/memories")
@@ -340,8 +369,9 @@ async def add_memory(data: Dict[str, str]):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="记忆内容不能为空"
         )
-    
-    memory = manager.add_memory(content, source="manual")
+
+    persona_id = data.get("persona_id") or None
+    memory = manager.add_memory(content, source="manual", persona_id=persona_id)
     return memory.model_dump()
 
 
@@ -441,18 +471,24 @@ async def get_memory_stats():
 
 @app.get("/personas", response_class=HTMLResponse)
 async def personas_page(request: Request):
-    return templates.TemplateResponse(request, "personas.html")
+    """人格管理页面（复用主页，前端通过 hash 定位）"""
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/api/personas")
 async def get_personas():
-    return persona_manager.get_all()
+    return persona_store.get_all()
 
 
 @app.get("/api/personas/active")
 async def get_active_persona():
-    p = persona_manager.get_active()
+    p = persona_store.get_active()
     return p if p else {"active": None}
+
+
+@app.get("/api/personas/active-list")
+async def get_active_persona_list():
+    return persona_store.get_active_list()
 
 
 @app.post("/api/personas")
@@ -460,7 +496,7 @@ async def add_persona(data: Dict[str, str]):
     name = data.get("name", "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="名称不能为空")
-    return persona_manager.add(
+    return persona_store.add(
         name=name,
         system_prompt=data.get("system_prompt", ""),
         model=data.get("model", ""),
@@ -470,7 +506,7 @@ async def add_persona(data: Dict[str, str]):
 
 @app.put("/api/personas/{pid}")
 async def update_persona(pid: str, data: Dict[str, str]):
-    result = persona_manager.update(pid, **data)
+    result = persona_store.update(pid, **data)
     if not result:
         raise HTTPException(status_code=404, detail="人格不存在")
     return result
@@ -478,16 +514,70 @@ async def update_persona(pid: str, data: Dict[str, str]):
 
 @app.delete("/api/personas/{pid}")
 async def delete_persona(pid: str):
-    if not persona_manager.delete(pid):
+    if not persona_store.delete(pid):
         raise HTTPException(status_code=404, detail="人格不存在")
     return {"success": True}
 
 
 @app.post("/api/personas/{pid}/activate")
 async def activate_persona(pid: str):
-    if not persona_manager.set_active(pid):
+    if not persona_store.set_active(pid):
         raise HTTPException(status_code=404, detail="人格不存在")
-    return {"success": True}
+    p = persona_store.get_by_id(pid)
+    return {"success": True, "active": p["active"] if p else False}
+
+
+@app.post("/api/personas/migrate")
+async def migrate_persona_backend(data: Dict[str, str]):
+    """将人格数据从当前后端迁移到目标后端"""
+    global persona_store, manager
+
+    target = data.get("target_backend", "").strip()
+    if target not in ("json", "sqlite"):
+        raise HTTPException(status_code=400, detail="目标后端必须是 json 或 sqlite")
+
+    current_backend = config.memory_settings.persona_backend
+    if target == current_backend:
+        return {"success": True, "message": "当前已是该后端，无需迁移", "migrated": 0}
+
+    # 1. 从当前后端读取所有人格
+    all_personas = persona_store.get_all()
+    if not all_personas:
+        # 无人格数据，直接切换后端
+        persona_store = create_persona_store(backend=target, data_dir=config.settings.data_dir)
+        manager.persona_manager = persona_store
+        config.memory_settings.persona_backend = target
+        config.save_memory_settings()
+        return {"success": True, "message": "无人格数据，已切换后端", "migrated": 0}
+
+    # 2. 创建目标后端并写入数据
+    new_store = create_persona_store(backend=target, data_dir=config.settings.data_dir)
+    migrated = 0
+    for p in all_personas:
+        new_store.add(
+            name=p["name"],
+            system_prompt=p.get("system_prompt", ""),
+            model=p.get("model", ""),
+            description=p.get("description", ""),
+        )
+        migrated += 1
+
+    # 3. 同步 active 状态
+    active_ids = [p["id"] for p in all_personas if p.get("active")]
+    new_all = new_store.get_all()
+    for new_p in new_all:
+        # 按名称匹配（新后端生成了新 ID）
+        old_match = next((o for o in all_personas if o["name"] == new_p["name"]), None)
+        if old_match and old_match.get("active") and not new_p.get("active"):
+            new_store.set_active(new_p["id"])
+
+    # 4. 切换全局引用
+    persona_store = new_store
+    manager.persona_manager = persona_store
+    config.memory_settings.persona_backend = target
+    config.save_memory_settings()
+
+    return {"success": True, "message": f"已迁移 {migrated} 个人格到 {target} 后端", "migrated": migrated}
 
 
 # ==================== 登录认证API ====================
@@ -567,14 +657,15 @@ async def preview_system_prompt(data: dict):
     """预览系统提示词（调试用）"""
     original_system = data.get("system", "")
     mode = data.get("mode", config.memory_settings.memory_mode)
-    
-    memories = manager.get_all_memories()
-    
+    persona_id = data.get("persona_id")
+
+    memories = manager.get_all_memories(persona_id=persona_id)
+
     if mode == "builtin":
         prompt = manager.build_builtin_system_prompt(original_system, memories)
     else:
         prompt = manager.build_system_prompt_with_memories(original_system, memories, "full")
-    
+
     return {
         "system_prompt": prompt,
         "memory_count": len(memories),
@@ -584,12 +675,34 @@ async def preview_system_prompt(data: dict):
 
 # ==================== OpenAI兼容API ====================
 
+def parse_persona_model(model_str: str):
+    if "/" in model_str:
+        name, real_model = model_str.split("/", 1)
+        persona = persona_store.get_by_name(name)
+        if persona:
+            return persona, real_model
+    return None, model_str
+
+
+def require_persona(model_str: str):
+    """解析模型名中的人格前缀，若存在 active 人格但未指定则抛 400"""
+    persona, real_model = parse_persona_model(model_str)
+    active_list = persona_store.get_active_list()
+    if active_list and not persona:
+        names = "/".join(p["name"] for p in active_list)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"请在模型名中指定人格前缀（如 {names[0]}/{real_model}），当前可用人格: {names}"
+        )
+    return persona, real_model
+
+
 @app.get("/v1/models")
 async def list_models():
     """获取模型列表"""
     models = []
     seen_names = set()
-    
+
     for ep in config.get_enabled_endpoints():
         for model in ep.models:
             # 查找该模型是否有别名
@@ -598,17 +711,31 @@ async def list_models():
                 if actual_name == model:
                     alias = alias_name
                     break
-            
+
             # 可用名称：优先别名，没有别名就用原名
             available_name = alias if alias else model
-            
+
             if available_name not in seen_names:
                 seen_names.add(available_name)
                 models.append(ModelInfo(
                     id=available_name,
                     owned_by=ep.provider
                 ))
-    
+
+    # 只用 active 的人格生成前缀模型名
+    active_personas = persona_store.get_active_list()
+    if active_personas:
+        import copy
+        prefixed = []
+        for m in models:
+            for p in active_personas:
+                kw = (p.get('model') or '').strip()
+                if not kw or kw.lower() in m.id.lower():
+                    pm = copy.deepcopy(m)
+                    pm.id = f"{p['name']}/{m.id}"
+                    prefixed.append(pm)
+        models = prefixed
+
     return ModelList(data=models)
 
 
@@ -638,20 +765,24 @@ async def chat_completions(request: Request):
         )
     
     # 获取适配器
+    # 解析人格前缀（强制绑定）
+    persona, openai_request.model = require_persona(openai_request.model)
+    persona_id = persona["id"] if persona else None
+
     adapter, endpoint, provider, actual_model = get_adapter_for_model(openai_request.model)
-    
+
     # 准备消息（注入记忆）
     messages = openai_request.messages
     original_system = None
-    
+
     # 根据注入模式处理记忆
     if config.memory_settings.injection_mode == "rag" and config.memory_settings.memory_mode != "builtin":
         # RAG模式：筛选相关记忆
-        selected_memories = await manager.select_memories_for_rag(messages)
+        selected_memories = await manager.select_memories_for_rag(messages, persona_id=persona_id)
         messages = manager.prepare_messages_with_memories(messages, "rag", selected_memories)
     else:
         # 全量模式或内置模式
-        all_memories = manager.get_all_memories()
+        all_memories = manager.get_all_memories(persona_id=persona_id) if persona_id else []
         if config.memory_settings.memory_mode == "builtin":
             messages = manager.prepare_messages_with_memories(messages, "builtin", all_memories)
         else:
@@ -708,7 +839,7 @@ async def chat_completions(request: Request):
                                 # 检查是否包含</memory>结束标签
                                 if not memory_processed and '</memory>' in text:
                                     debug_print(f"[流式响应] 检测到</memory>结束，开始提取记忆")
-                                    await manager.process_builtin_memory_extraction(full_response)
+                                    if persona_id: await manager.process_builtin_memory_extraction(full_response, persona_id=persona_id)
                                     memory_processed = True
                                 
                                 # 只在未开始memory标签时输出
@@ -726,7 +857,7 @@ async def chat_completions(request: Request):
                             debug_print(f"[流式响应] Anthropic 收到 message_stop, 总长度: {len(full_response)}")
                             # 处理内置模式的记忆提取（如果还没处理）
                             if config.memory_settings.memory_mode == "builtin" and not memory_processed:
-                                await manager.process_builtin_memory_extraction(full_response)
+                                if persona_id: await manager.process_builtin_memory_extraction(full_response, persona_id=persona_id)
                             
                             yield f"data: {json.dumps({'choices': [{'finish_reason': 'stop'}]}, ensure_ascii=False)}\n\n"
                             yield "data: [DONE]\n\n"
@@ -737,7 +868,7 @@ async def chat_completions(request: Request):
                     if config.memory_settings.memory_mode == "external":
                         manager.conversation_counter += 1
                         if manager.conversation_counter >= config.memory_settings.summary_interval:
-                            await manager.external_summarize_memory(openai_request.messages)
+                            await manager.external_summarize_memory(openai_request.messages, persona_id=persona_id)
                             manager.conversation_counter = 0
                 
                 return StreamingResponse(
@@ -759,7 +890,7 @@ async def chat_completions(request: Request):
                         if block.get("type") == "text":
                             response_text += block.get("text", "")
                     
-                    cleaned_text = await manager.process_builtin_memory_extraction(response_text)
+                    cleaned_text = (await manager.process_builtin_memory_extraction(response_text, persona_id=persona_id)) if persona_id else response_text
                     # 更新响应内容
                     if openai_response.choices:
                         openai_response.choices[0].message["content"] = cleaned_text
@@ -768,7 +899,7 @@ async def chat_completions(request: Request):
                 if config.memory_settings.memory_mode == "external":
                     manager.conversation_counter += 1
                     if manager.conversation_counter >= config.memory_settings.summary_interval:
-                        await manager.external_summarize_memory(openai_request.messages)
+                        await manager.external_summarize_memory(openai_request.messages, persona_id=persona_id)
                         manager.conversation_counter = 0
                 
                 return JSONResponse(content=openai_response.model_dump())
@@ -943,7 +1074,7 @@ async def chat_completions(request: Request):
                     
                     # 处理记忆提取
                     if config.memory_settings.memory_mode == "builtin" and not memory_processed:
-                        await manager.process_builtin_memory_extraction(full_content)
+                        if persona_id: await manager.process_builtin_memory_extraction(full_content)
                     
                     # 发送结束标记
                     if in_memory or tag_buffer:
@@ -954,7 +1085,7 @@ async def chat_completions(request: Request):
                     if config.memory_settings.memory_mode == "external":
                         manager.conversation_counter += 1
                         if manager.conversation_counter >= config.memory_settings.summary_interval:
-                            await manager.external_summarize_memory(openai_request.messages)
+                            await manager.external_summarize_memory(openai_request.messages, persona_id=persona_id)
                             manager.conversation_counter = 0
                 
                 return StreamingResponse(
@@ -967,7 +1098,7 @@ async def chat_completions(request: Request):
                 # 处理内置模式的记忆提取
                 if config.memory_settings.memory_mode == "builtin":
                     response_text = response.choices[0].message.get("content", "") if response.choices else ""
-                    cleaned_text = await manager.process_builtin_memory_extraction(response_text)
+                    cleaned_text = (await manager.process_builtin_memory_extraction(response_text, persona_id=persona_id)) if persona_id else response_text
                     if response.choices:
                         response.choices[0].message["content"] = cleaned_text
                 
@@ -975,7 +1106,7 @@ async def chat_completions(request: Request):
                 if config.memory_settings.memory_mode == "external":
                     manager.conversation_counter += 1
                     if manager.conversation_counter >= config.memory_settings.summary_interval:
-                        await manager.external_summarize_memory(openai_request.messages)
+                        await manager.external_summarize_memory(openai_request.messages, persona_id=persona_id)
                         manager.conversation_counter = 0
                 
                 return JSONResponse(content=response.model_dump())
@@ -1021,18 +1152,22 @@ async def anthropic_messages(request: Request):
     
     # 转换为OpenAI格式以便处理
     openai_request = APIConverter.anthropic_to_openai(anthropic_request)
-    
+
     # 获取适配器
+    # 解析人格前缀（强制绑定）
+    persona, openai_request.model = require_persona(openai_request.model)
+    persona_id = persona["id"] if persona else None
+
     adapter, endpoint, provider, actual_model = get_adapter_for_model(openai_request.model)
     
     # 准备消息（注入记忆）
     messages = openai_request.messages
     
     if config.memory_settings.injection_mode == "rag" and config.memory_settings.memory_mode != "builtin":
-        selected_memories = await manager.select_memories_for_rag(messages)
+        selected_memories = await manager.select_memories_for_rag(messages, persona_id=persona_id)
         messages = manager.prepare_messages_with_memories(messages, "rag", selected_memories)
     else:
-        all_memories = manager.get_all_memories()
+        all_memories = manager.get_all_memories(persona_id=persona_id) if persona_id else []
         if config.memory_settings.memory_mode == "builtin":
             messages = manager.prepare_messages_with_memories(messages, "builtin", all_memories)
         else:
@@ -1089,13 +1224,13 @@ async def anthropic_messages(request: Request):
                     
                     # 处理记忆提取
                     if config.memory_settings.memory_mode == "builtin":
-                        await manager.process_builtin_memory_extraction(full_response)
+                        if persona_id: await manager.process_builtin_memory_extraction(full_response, persona_id=persona_id)
                     
                     # 外接模型模式
                     if config.memory_settings.memory_mode == "external":
                         manager.conversation_counter += 1
                         if manager.conversation_counter >= config.memory_settings.summary_interval:
-                            await manager.external_summarize_memory(openai_request.messages)
+                            await manager.external_summarize_memory(openai_request.messages, persona_id=persona_id)
                             manager.conversation_counter = 0
                 
                 return StreamingResponse(
@@ -1112,7 +1247,7 @@ async def anthropic_messages(request: Request):
                         if block.get("type") == "text":
                             response_text += block.get("text", "")
                     
-                    cleaned_text = await manager.process_builtin_memory_extraction(response_text)
+                    cleaned_text = (await manager.process_builtin_memory_extraction(response_text, persona_id=persona_id)) if persona_id else response_text
                     # 更新响应内容
                     for block in response.get("content", []):
                         if block.get("type") == "text":
@@ -1123,7 +1258,7 @@ async def anthropic_messages(request: Request):
                 if config.memory_settings.memory_mode == "external":
                     manager.conversation_counter += 1
                     if manager.conversation_counter >= config.memory_settings.summary_interval:
-                        await manager.external_summarize_memory(openai_request.messages)
+                        await manager.external_summarize_memory(openai_request.messages, persona_id=persona_id)
                         manager.conversation_counter = 0
                 
                 return JSONResponse(content=response)

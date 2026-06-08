@@ -74,6 +74,8 @@ class MemorySettings(BaseModel):
         description="记忆注入格式模板"
     )
 
+    persona_backend: str = Field(default="json", description="人格存储后端: json 或 sqlite")
+
 
 class Settings(BaseSettings):
     """全局设置"""
