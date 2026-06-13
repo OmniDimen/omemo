@@ -44,7 +44,7 @@ class ChatMessage(BaseModel):
 class MemoryItem(BaseModel):
     """记忆条目"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="记忆ID")
-    persona_id: Optional[str] = Field(default=None, description="绑定的人格ID")
+    persona_ids: List[str] = Field(default_factory=list, description="绑定的人格ID列表")
     content: str = Field(..., description="记忆内容")
     created_at: str = Field(
         default_factory=lambda: datetime.now().isoformat(),

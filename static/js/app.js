@@ -8,7 +8,8 @@ const state = {
     memorySettings: {},
     currentSection: 'endpoints',
     isLoggedIn: false,
-    loginEnabled: false,
+    hasAccessKeys: false,
+    accessKeys: [],
     // 记忆按人格分组
     memoryPersonaFilter: null, // null=全部, ''=未绑定, 'xxx'=persona_id
     memoryPersonaGroups: []
@@ -90,20 +91,21 @@ function initElements() {
     // 通用设置
     elements.saveGeneralSettingsBtn = document.getElementById('save-general-settings-btn');
     elements.debugModeToggle = document.getElementById('debug-mode-toggle');
-    elements.loginToggle = document.getElementById('login-toggle');
-    elements.loginActions = document.getElementById('login-actions');
-    elements.resetKeyBtn = document.getElementById('reset-key-btn');
+
+    // 访问密钥
+    elements.generateKeyBtn = document.getElementById('generate-key-btn');
+    elements.accessKeysList = document.getElementById('access-keys-list');
 
     // 人格存储后端
     elements.personaBackendInputs = document.querySelectorAll('input[name="persona-backend"]');
     elements.migratePersonaBtn = document.getElementById('migrate-persona-btn');
     elements.migrateStatus = document.getElementById('migrate-status');
-    
-    // Session Key 弹窗
-    elements.sessionKeyModal = document.getElementById('session-key-modal');
-    elements.sessionKeyDisplay = document.getElementById('session-key-display');
-    elements.closeSessionKeyModal = document.getElementById('close-session-key-modal');
-    elements.closeSessionKeyBtn = document.getElementById('close-session-key-btn');
+
+    // 访问密钥弹窗
+    elements.accessKeyModal = document.getElementById('access-key-modal');
+    elements.accessKeyDisplay = document.getElementById('access-key-display');
+    elements.closeAccessKeyModal = document.getElementById('close-access-key-modal');
+    elements.closeAccessKeyBtn = document.getElementById('close-access-key-btn');
     
     // 模型列表
     elements.modelsTable = document.getElementById('models-table')?.querySelector('tbody');
@@ -206,23 +208,20 @@ function bindEvents() {
     
     // 通用设置
     elements.saveGeneralSettingsBtn.addEventListener('click', saveGeneralSettings);
-    
-    // 登录认证
-    if (elements.loginToggle) {
-        elements.loginToggle.addEventListener('change', toggleLogin);
+
+    // 访问密钥
+    if (elements.generateKeyBtn) {
+        elements.generateKeyBtn.addEventListener('click', generateAccessKey);
     }
-    if (elements.resetKeyBtn) {
-        elements.resetKeyBtn.addEventListener('click', resetSessionKey);
+    if (elements.closeAccessKeyModal) {
+        elements.closeAccessKeyModal.addEventListener('click', closeAccessKeyModal);
     }
-    if (elements.closeSessionKeyModal) {
-        elements.closeSessionKeyModal.addEventListener('click', closeSessionKeyModal);
+    if (elements.closeAccessKeyBtn) {
+        elements.closeAccessKeyBtn.addEventListener('click', closeAccessKeyModal);
     }
-    if (elements.closeSessionKeyBtn) {
-        elements.closeSessionKeyBtn.addEventListener('click', closeSessionKeyModal);
-    }
-    if (elements.sessionKeyModal) {
-        elements.sessionKeyModal.addEventListener('click', (e) => {
-            if (e.target === elements.sessionKeyModal) closeSessionKeyModal();
+    if (elements.accessKeyModal) {
+        elements.accessKeyModal.addEventListener('click', (e) => {
+            if (e.target === elements.accessKeyModal) closeAccessKeyModal();
         });
     }
     
@@ -293,22 +292,22 @@ function populateEndpointSelects() {
 // 更新模型选择下拉框
 function updateModelSelect(endpointSelect, modelSelect, urlInput = null, keyInput = null) {
     const selectedOption = endpointSelect.selectedOptions[0];
-    
+
     if (!selectedOption || !selectedOption.value) {
         modelSelect.innerHTML = '<option value="">-- 先选择端点 --</option>';
         if (urlInput) urlInput.value = '';
         if (keyInput) keyInput.value = '';
         return;
     }
-    
+
     // 更新URL和密钥
     if (urlInput) urlInput.value = selectedOption.dataset.url || '';
     if (keyInput) keyInput.value = selectedOption.dataset.key || '';
-    
-    // 填充模型选项
+
+    // 填充模型选项（外接模型配置使用原始模型名，不加供应商前缀）
     const models = JSON.parse(selectedOption.dataset.models || '[]');
     modelSelect.innerHTML = '<option value="">-- 选择模型 --</option>';
-    
+
     models.forEach(model => {
         const option = document.createElement('option');
         option.value = model;
@@ -337,10 +336,12 @@ function switchSection(section) {
         'models': '模型列表',
         'memory-settings': '记忆功能配置',
         'memories': '记忆管理',
+        'personas': '人格管理',
+        'access-keys': '访问密钥管理',
         'general-settings': '通用设置'
     };
     elements.pageTitle.textContent = titles[section];
-    
+
     // 加载对应数据
     if (section === 'endpoints') {
         loadEndpoints();
@@ -351,6 +352,8 @@ function switchSection(section) {
     } else if (section === 'memories') {
         loadMemoryPersonaTabs();
         loadMemories();
+    } else if (section === 'access-keys') {
+        loadAccessKeys();
     } else if (section === 'general-settings') {
         loadGeneralSettings();
     }
@@ -372,24 +375,24 @@ async function loadAllData() {
 // 加载端点
 async function loadEndpoints() {
     try {
-        const response = await fetch('/api/config/endpoints');
+        const response = await authFetch('/api/config/endpoints');
         if (!response.ok) throw new Error('加载失败');
         state.endpoints = await response.json();
         renderEndpoints();
     } catch (error) {
-        showToast('加载端点配置失败', 'error');
+        if (error.message !== 'Unauthorized') showToast('加载端点配置失败', 'error');
     }
 }
 
 // 加载模型列表
 async function loadModels() {
     try {
-        const response = await fetch('/api/models');
+        const response = await authFetch('/api/models');
         if (!response.ok) throw new Error('加载失败');
         state.models = await response.json();
         renderModels();
     } catch (error) {
-        showToast('加载模型列表失败', 'error');
+        if (error.message !== 'Unauthorized') showToast('加载模型列表失败', 'error');
     }
 }
 
@@ -407,7 +410,7 @@ function renderModels() {
         <tr>
             <td ${m.has_conflict && !m.alias ? 'style="color: var(--danger-color); font-weight: 600;"' : ''}>
                 ${m.has_conflict && !m.alias ? '<i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>' : ''}
-                ${escapeHtml(m.available_name)}
+                ${escapeHtml(m.display_name)}
             </td>
             <td style="color: var(--text-secondary); font-size: 13px;">
                 ${m.alias ? `<span style="text-decoration: line-through;">${escapeHtml(m.model)}</span>` : '-'}
@@ -468,17 +471,17 @@ async function fetchModelsFromEndpoint() {
     elements.confirmModelPickerBtn.disabled = true;
     
     try {
-        const response = await fetch('/api/models/fetch', {
+        const response = await authFetch('/api/models/fetch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url, api_key: apiKey, provider })
         });
-        
+
         if (!response.ok) {
             const data = await response.json();
             throw new Error(data.detail || '获取失败');
         }
-        
+
         const data = await response.json();
         state.pickerModels = data.models || [];
         
@@ -610,35 +613,35 @@ async function saveEndpoint() {
         models: document.getElementById('endpoint-models').value.split(',').map(m => m.trim()).filter(m => m),
         enabled: document.getElementById('endpoint-enabled').checked
     };
-    
+
     if (!formData.name || !formData.url || !formData.api_key || formData.models.length === 0) {
         showToast('请填写完整信息', 'error');
         return;
     }
-    
+
     const originalName = elements.endpointOriginalName.value;
     const isEdit = !!originalName;
-    
+
     try {
         const url = isEdit ? `/api/config/endpoints/${encodeURIComponent(originalName)}` : '/api/config/endpoints';
         const method = isEdit ? 'PUT' : 'POST';
-        
-        const response = await fetch(url, {
+
+        const response = await authFetch(url, {
             method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(formData)
         });
-        
+
         if (!response.ok) {
             const data = await response.json();
             throw new Error(data.detail || '保存失败');
         }
-        
+
         showToast(isEdit ? '端点更新成功' : '端点添加成功', 'success');
         closeEndpointModal();
         loadEndpoints();
     } catch (error) {
-        showToast(error.message, 'error');
+        if (error.message !== 'Unauthorized') showToast(error.message, 'error');
     }
 }
 
@@ -653,25 +656,25 @@ function editEndpoint(name) {
 // 删除端点
 async function deleteEndpoint(name) {
     if (!confirm(`确定要删除端点 "${name}" 吗？`)) return;
-    
+
     try {
-        const response = await fetch(`/api/config/endpoints/${encodeURIComponent(name)}`, {
+        const response = await authFetch(`/api/config/endpoints/${encodeURIComponent(name)}`, {
             method: 'DELETE'
         });
-        
+
         if (!response.ok) throw new Error('删除失败');
-        
+
         showToast('端点删除成功', 'success');
         loadEndpoints();
     } catch (error) {
-        showToast('删除失败', 'error');
+        if (error.message !== 'Unauthorized') showToast('删除失败', 'error');
     }
 }
 
 // 加载记忆设置
 async function loadMemorySettings() {
     try {
-        const response = await fetch('/api/config/memory');
+        const response = await authFetch('/api/config/memory');
         if (!response.ok) throw new Error('加载失败');
         state.memorySettings = await response.json();
         
@@ -746,25 +749,25 @@ async function saveMemorySettings() {
         external_model_name: elements.externalModelSelect.value.trim() || null,
         summary_interval: parseInt(elements.summaryInterval.value) || 5,
         rag_max_memories: parseInt(elements.ragMaxMemories.value) || 10,
-        rag_model_endpoint: elements.ragEndpointSelect.value ? 
+        rag_model_endpoint: elements.ragEndpointSelect.value ?
             state.endpoints.find(ep => ep.name === elements.ragEndpointSelect.value)?.url : null,
         rag_model: elements.ragModelSelect.value.trim() || null,
         memory_format: '<memory>\n{memories}\n</memory>'
     };
-    
+
     try {
-        const response = await fetch('/api/config/memory', {
+        const response = await authFetch('/api/config/memory', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(settings)
         });
-        
+
         if (!response.ok) throw new Error('保存失败');
-        
+
         showToast('记忆设置保存成功', 'success');
         state.memorySettings = settings;
     } catch (error) {
-        showToast('保存失败', 'error');
+        if (error.message !== 'Unauthorized') showToast('保存失败', 'error');
     }
 }
 
@@ -778,10 +781,6 @@ function updateGeneralSettingsUI() {
     if (elements.debugModeToggle) {
         elements.debugModeToggle.checked = state.memorySettings.debug_mode || false;
     }
-    if (elements.loginToggle) {
-        elements.loginToggle.checked = state.memorySettings.login_enabled || false;
-        updateLoginActionsVisibility();
-    }
     // 人格存储后端
     if (elements.personaBackendInputs && elements.personaBackendInputs.length) {
         var currentBackend = state.memorySettings.persona_backend || 'json';
@@ -789,13 +788,6 @@ function updateGeneralSettingsUI() {
             input.checked = (input.value === currentBackend);
         });
         updateMigrateBtn();
-    }
-}
-
-// 更新登录操作按钮可见性
-function updateLoginActionsVisibility() {
-    if (elements.loginActions) {
-        elements.loginActions.style.display = state.memorySettings.login_enabled ? 'block' : 'none';
     }
 }
 
@@ -816,7 +808,7 @@ async function saveGeneralSettings() {
     };
 
     try {
-        const response = await fetch('/api/config/memory', {
+        const response = await authFetch('/api/config/memory', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(settings)
@@ -827,94 +819,135 @@ async function saveGeneralSettings() {
         showToast('设置保存成功', 'success');
         state.memorySettings = settings;
     } catch (error) {
-        showToast('保存失败', 'error');
+        if (error.message !== 'Unauthorized') showToast('保存失败', 'error');
     }
 }
 
-// 切换登录功能
-async function toggleLogin() {
-    const enabled = elements.loginToggle.checked;
-    
+// 加载访问密钥列表
+async function loadAccessKeys() {
     try {
-        let response;
-        if (enabled) {
-            // 启用登录，生成新的 session key
-            response = await fetch('/api/auth/enable', { method: 'POST' });
-        } else {
-            // 禁用登录
-            response = await fetch('/api/auth/disable', { method: 'POST' });
-        }
-        
-        const data = await response.json();
-        
-        if (response.ok) {
-            state.memorySettings.login_enabled = enabled;
-            updateLoginActionsVisibility();
-            
-            if (data.session_key) {
-                // 显示 session key
-                showSessionKey(data.session_key);
-            }
-            
-            if (!enabled) {
-                // 禁用登录时清除本地保存的session_key
-                localStorage.removeItem('session_key');
-                state.isLoggedIn = false;
-            }
-            
-            showToast(enabled ? '登录功能已启用' : '登录功能已禁用', 'success');
-        } else {
-            // 恢复开关状态
-            elements.loginToggle.checked = !enabled;
-            showToast(data.detail || '操作失败', 'error');
-        }
+        const response = await authFetch('/api/access-keys');
+        if (!response.ok) throw new Error('加载失败');
+        state.accessKeys = await response.json();
+        state.hasAccessKeys = state.accessKeys.some(k => k.enabled);
+        renderAccessKeys();
     } catch (error) {
-        elements.loginToggle.checked = !enabled;
+        console.error('加载访问密钥失败', error);
+    }
+}
+
+// 渲染访问密钥列表
+function renderAccessKeys() {
+    if (!elements.accessKeysList) return;
+
+    if (state.accessKeys.length === 0) {
+        elements.accessKeysList.innerHTML = `
+            <div class="access-keys-empty">
+                <i class="fas fa-key"></i>
+                <p>暂无访问密钥，点击上方按钮生成</p>
+            </div>
+        `;
+        return;
+    }
+
+    elements.accessKeysList.innerHTML = state.accessKeys.map(key => `
+        <div class="access-key-item ${key.enabled ? '' : 'disabled'}">
+            <div class="access-key-icon">
+                <i class="fas fa-key"></i>
+            </div>
+            <div class="access-key-info">
+                <div class="access-key-name">${escapeHtml(key.name)}</div>
+                <div class="access-key-value">${escapeHtml(key.masked_key)}</div>
+                <div class="access-key-meta">${formatDate(key.created_at)}</div>
+            </div>
+            <div class="access-key-actions">
+                <button class="btn btn-secondary" onclick="toggleAccessKey('${key.id}', ${!key.enabled})" title="${key.enabled ? '禁用' : '启用'}">
+                    <i class="fas fa-${key.enabled ? 'pause' : 'play'}"></i>
+                </button>
+                <button class="btn btn-danger" onclick="deleteAccessKey('${key.id}')" title="删除">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+// 生成新的访问密钥
+async function generateAccessKey() {
+    const name = prompt('请输入密钥名称（可选）：', `密钥-${state.accessKeys.length + 1}`);
+    if (name === null) return; // 用户取消
+
+    try {
+        const response = await authFetch('/api/access-keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name || '' })
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.detail || '生成失败');
+        }
+
+        const data = await response.json();
+        showAccessKeyModal(data.key);
+        loadAccessKeys();
+        showToast('访问密钥已生成', 'success');
+    } catch (error) {
+        showToast(error.message || '生成失败', 'error');
+    }
+}
+
+// 删除访问密钥
+async function deleteAccessKey(keyId) {
+    if (!confirm('确定要删除此访问密钥吗？删除后使用该密钥的客户端将无法访问。')) return;
+
+    try {
+        const response = await authFetch(`/api/access-keys/${keyId}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('删除失败');
+        showToast('访问密钥已删除', 'success');
+        loadAccessKeys();
+    } catch (error) {
+        showToast('删除失败', 'error');
+    }
+}
+
+// 启用/禁用访问密钥
+async function toggleAccessKey(keyId, enabled) {
+    try {
+        const response = await authFetch(`/api/access-keys/${keyId}/toggle`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        if (!response.ok) throw new Error('操作失败');
+        showToast(enabled ? '密钥已启用' : '密钥已禁用', 'success');
+        loadAccessKeys();
+    } catch (error) {
         showToast('操作失败', 'error');
     }
 }
 
-// 重置 Session Key
-async function resetSessionKey() {
-    if (!confirm('确定要重置 Session Key 吗？重置后旧的 Key 将失效。')) {
-        return;
+// 显示访问密钥弹窗
+function showAccessKeyModal(key) {
+    if (elements.accessKeyDisplay) {
+        elements.accessKeyDisplay.textContent = key;
     }
-    
-    try {
-        const response = await fetch('/api/auth/reset-key', { method: 'POST' });
-        const data = await response.json();
-        
-        if (response.ok) {
-            showSessionKey(data.session_key);
-            showToast('Session Key 已重置', 'success');
-        } else {
-            showToast(data.detail || '重置失败', 'error');
-        }
-    } catch (error) {
-        showToast('重置失败', 'error');
+    if (elements.accessKeyModal) {
+        elements.accessKeyModal.classList.add('show');
     }
 }
 
-// 显示 Session Key
-function showSessionKey(key) {
-    if (elements.sessionKeyDisplay) {
-        elements.sessionKeyDisplay.textContent = key;
-    }
-    if (elements.sessionKeyModal) {
-        elements.sessionKeyModal.classList.add('show');
+// 关闭访问密钥弹窗
+function closeAccessKeyModal() {
+    if (elements.accessKeyModal) {
+        elements.accessKeyModal.classList.remove('show');
     }
 }
 
-// 关闭 Session Key 弹窗
-function closeSessionKeyModal() {
-    if (elements.sessionKeyModal) {
-        elements.sessionKeyModal.classList.remove('show');
-    }
-}
-
-// 复制 Session Key
-function copySessionKey() {
-    const key = elements.sessionKeyDisplay?.textContent;
+// 复制访问密钥
+function copyAccessKey() {
+    const key = elements.accessKeyDisplay?.textContent;
     if (key) {
         navigator.clipboard.writeText(key).then(() => {
             showToast('已复制到剪贴板', 'success');
@@ -933,13 +966,13 @@ async function loadMemories(keyword = '') {
         if (state.memoryPersonaFilter !== null) params.push(`persona_id=${encodeURIComponent(state.memoryPersonaFilter)}`);
         if (params.length) url += '?' + params.join('&');
 
-        const response = await fetch(url);
+        const response = await authFetch(url);
         if (!response.ok) throw new Error('加载失败');
         state.memories = await response.json();
         renderMemories();
         updateMemoryCount();
     } catch (error) {
-        showToast('加载记忆失败', 'error');
+        if (error.message !== 'Unauthorized') showToast('加载记忆失败', 'error');
     }
 }
 
@@ -947,8 +980,8 @@ async function loadMemories(keyword = '') {
 async function loadMemoryPersonaTabs() {
     try {
         const [groupsRes, personasRes] = await Promise.all([
-            fetch('/api/memories/by-persona'),
-            fetch('/api/personas')
+            authFetch('/api/memories/by-persona'),
+            authFetch('/api/personas')
         ]);
         if (!groupsRes.ok || !personasRes.ok) throw new Error('加载失败');
 
@@ -958,6 +991,10 @@ async function loadMemoryPersonaTabs() {
 
         const totalCount = groups.reduce(function(sum, g) { return sum + g.memories.length; }, 0);
 
+        // 构建 persona_id -> name 映射
+        var personaNameMap = {};
+        personas.forEach(function(p) { personaNameMap[p.id] = p.name; });
+
         // 构建 tab
         var tabsHtml = '<button class="memory-tab' + (state.memoryPersonaFilter === null ? ' active' : '') + '" data-persona-id="__all__">全部<span class="tab-count">' + totalCount + '</span></button>';
 
@@ -966,7 +1003,8 @@ async function loadMemoryPersonaTabs() {
             var isActive = state.memoryPersonaFilter === g.persona_id ||
                            (state.memoryPersonaFilter === '' && g.persona_id === null);
             var pid = g.persona_id || '';
-            tabsHtml += '<button class="memory-tab' + (isActive ? ' active' : '') + '" data-persona-id="' + escHtml(pid) + '">' + escHtml(g.persona_name) + '<span class="tab-count">' + g.memories.length + '</span></button>';
+            var displayName = g.persona_id ? (personaNameMap[g.persona_id] || g.persona_name) : '未绑定';
+            tabsHtml += '<button class="memory-tab' + (isActive ? ' active' : '') + '" data-persona-id="' + escHtml(pid) + '">' + escHtml(displayName) + '<span class="tab-count">' + g.memories.length + '</span></button>';
         });
 
         // 未绑定人格 tab（如果有）
@@ -1045,18 +1083,52 @@ function searchMemories() {
 }
 
 // 打开记忆模态框
-function openMemoryModal(memory = null) {
+async function openMemoryModal(memory = null) {
     elements.memoryForm.reset();
     elements.memoryId.value = '';
-    
+
+    // 加载人格列表到 checkbox 列表
+    var checkboxContainer = document.getElementById('memory-persona-checkboxes');
+    checkboxContainer.innerHTML = '';
+    try {
+        var res = await authFetch('/api/personas');
+        if (res.ok) {
+            var personas = await res.json();
+            personas.forEach(function(p) {
+                var item = document.createElement('div');
+                item.className = 'persona-checkbox-item';
+                var cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.id = 'mem-pcb-' + p.id;
+                cb.value = p.id;
+                var lbl = document.createElement('label');
+                lbl.htmlFor = 'mem-pcb-' + p.id;
+                lbl.textContent = p.name;
+                item.appendChild(cb);
+                item.appendChild(lbl);
+                checkboxContainer.appendChild(item);
+            });
+        }
+    } catch (e) {}
+
     if (memory) {
         elements.memoryModalTitle.textContent = '编辑记忆';
         elements.memoryId.value = memory.id;
         elements.memoryContent.value = memory.content;
+        // 勾选已绑定的人格
+        var boundIds = memory.persona_ids || [];
+        checkboxContainer.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
+            cb.checked = boundIds.indexOf(cb.value) !== -1;
+        });
     } else {
         elements.memoryModalTitle.textContent = '添加记忆';
+        // 如果当前在某个persona筛选下，自动勾选
+        if (state.memoryPersonaFilter && state.memoryPersonaFilter !== '') {
+            var target = checkboxContainer.querySelector('input[value="' + state.memoryPersonaFilter + '"]');
+            if (target) target.checked = true;
+        }
     }
-    
+
     elements.memoryModal.classList.add('show');
 }
 
@@ -1069,40 +1141,45 @@ function closeMemoryModal() {
 async function saveMemory() {
     const id = elements.memoryId.value;
     const content = elements.memoryContent.value.trim();
-    
+
+    // 收集所有勾选的 persona_id
+    var personaIds = [];
+    var checkboxes = document.querySelectorAll('#memory-persona-checkboxes input[type="checkbox"]:checked');
+    checkboxes.forEach(function(cb) { personaIds.push(cb.value); });
+
     if (!content) {
         showToast('请输入记忆内容', 'error');
         return;
     }
-    
+
     try {
         let response;
         if (id) {
             // 更新
-            response = await fetch(`/api/memories/${id}`, {
+            response = await authFetch(`/api/memories/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content })
+                body: JSON.stringify({ content, persona_ids: personaIds })
             });
         } else {
             // 添加
-            response = await fetch('/api/memories', {
+            response = await authFetch('/api/memories', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content })
+                body: JSON.stringify({ content, persona_ids: personaIds })
             });
         }
-        
+
         if (!response.ok) {
             const data = await response.json();
             throw new Error(data.detail || '保存失败');
         }
-        
+
         showToast(id ? '记忆更新成功' : '记忆添加成功', 'success');
         closeMemoryModal();
         loadMemories();
     } catch (error) {
-        showToast(error.message, 'error');
+        if (error.message !== 'Unauthorized') showToast(error.message, 'error');
     }
 }
 
@@ -1117,18 +1194,18 @@ function editMemory(id) {
 // 删除记忆
 async function deleteMemory(id) {
     if (!confirm('确定要删除这条记忆吗？')) return;
-    
+
     try {
-        const response = await fetch(`/api/memories/${id}`, {
+        const response = await authFetch(`/api/memories/${id}`, {
             method: 'DELETE'
         });
-        
+
         if (!response.ok) throw new Error('删除失败');
-        
+
         showToast('记忆删除成功', 'success');
         loadMemories();
     } catch (error) {
-        showToast('删除失败', 'error');
+        if (error.message !== 'Unauthorized') showToast('删除失败', 'error');
     }
 }
 
@@ -1163,40 +1240,35 @@ function formatDate(dateStr) {
     return date.toLocaleString('zh-CN');
 }
 
-// ==================== 登录认证相关 ====================
+// ==================== WebUI 登录认证相关（admin token，独立于 access key） ====================
 
 // 检查登录状态
 async function checkAuthStatus() {
     try {
-        const response = await fetch('/api/auth/status');
+        const adminToken = localStorage.getItem('admin_token');
+        const headers = {};
+        if (adminToken) {
+            headers['Authorization'] = `Bearer ${adminToken}`;
+        }
+
+        const response = await fetch('/api/auth/status', { headers });
         const data = await response.json();
-        
-        state.loginEnabled = data.login_enabled;
-        
-        // 如果未启用登录，直接继续
-        if (!data.login_enabled) {
-            state.isLoggedIn = true;
-            return true;
+
+        // admin 未配置（首次使用）→ 跳转到设置密码页面
+        if (!data.admin_configured) {
+            window.location.href = '/login';
+            return false;
         }
-        
-        // 检查本地存储的 session key
-        const savedKey = localStorage.getItem('session_key');
-        if (savedKey) {
-            const verifyResponse = await fetch('/api/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_key: savedKey })
-            });
-            
-            if (verifyResponse.ok) {
-                state.isLoggedIn = true;
-                return true;
-            }
+
+        // 已配置但未登录 → 跳转到登录页面
+        if (!data.logged_in) {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/login';
+            return false;
         }
-        
-        // 未登录，跳转到登录页面
-        window.location.href = '/login';
-        return false;
+
+        state.isLoggedIn = true;
+        return true;
     } catch (error) {
         console.error('Auth check failed:', error);
         return true; // 出错时允许继续，避免死循环
@@ -1206,9 +1278,9 @@ async function checkAuthStatus() {
 // 获取认证头
 function getAuthHeaders() {
     const headers = { 'Content-Type': 'application/json' };
-    const sessionKey = localStorage.getItem('session_key');
-    if (sessionKey && state.loginEnabled) {
-        headers['Authorization'] = `Bearer ${sessionKey}`;
+    const adminToken = localStorage.getItem('admin_token');
+    if (adminToken) {
+        headers['Authorization'] = `Bearer ${adminToken}`;
     }
     return headers;
 }
@@ -1217,22 +1289,28 @@ function getAuthHeaders() {
 async function authFetch(url, options = {}) {
     const headers = { ...getAuthHeaders(), ...options.headers };
     const response = await fetch(url, { ...options, headers });
-    
+
     // 如果返回401，跳转到登录页面
     if (response.status === 401) {
-        localStorage.removeItem('session_key');
-        localStorage.removeItem('logged_in');
+        localStorage.removeItem('admin_token');
         window.location.href = '/login';
         throw new Error('Unauthorized');
     }
-    
+
     return response;
 }
 
 // 登出
 function logout() {
-    localStorage.removeItem('session_key');
-    localStorage.removeItem('logged_in');
+    // 调用后端登出接口（忽略错误）
+    const adminToken = localStorage.getItem('admin_token');
+    if (adminToken) {
+        fetch('/api/logout', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${adminToken}` }
+        }).catch(() => {});
+    }
+    localStorage.removeItem('admin_token');
     window.location.href = '/login';
 }
 
@@ -1260,9 +1338,9 @@ function closeAliasModal() {
 async function saveAlias() {
     const { endpoint, model } = state.editingModel;
     const alias = elements.aliasInput.value.trim();
-    
+
     try {
-        const response = await fetch('/api/models/alias', {
+        const response = await authFetch('/api/models/alias', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1271,17 +1349,17 @@ async function saveAlias() {
                 alias: alias
             })
         });
-        
+
         if (!response.ok) {
             const data = await response.json();
             throw new Error(data.detail || '保存失败');
         }
-        
+
         closeAliasModal();
         await loadModels();
         showToast(alias ? '别名已设置' : '别名已清除', 'success');
     } catch (error) {
-        showToast(error.message || '保存失败', 'error');
+        if (error.message !== 'Unauthorized') showToast(error.message || '保存失败', 'error');
     }
 }
 
@@ -1295,8 +1373,10 @@ window.deleteEndpoint = deleteEndpoint;
 window.editMemory = editMemory;
 window.deleteMemory = deleteMemory;
 window.logout = logout;
-window.copySessionKey = copySessionKey;
+window.copyAccessKey = copyAccessKey;
 window.openAliasModal = openAliasModal;
+window.deleteAccessKey = deleteAccessKey;
+window.toggleAccessKey = toggleAccessKey;
 
 // ==================== 移动端菜单 ====================
 

@@ -50,13 +50,13 @@ class MemoryManager:
         """根据ID获取记忆"""
         return self.storage.get_by_id(memory_id)
     
-    def add_memory(self, content: str, source: str = "manual", persona_id=None) -> MemoryItem:
+    def add_memory(self, content: str, source: str = "manual", persona_ids=None) -> MemoryItem:
         """手动添加记忆"""
-        return self.storage.add(content=content, source=source, persona_id=persona_id)
+        return self.storage.add(content=content, source=source, persona_ids=persona_ids)
     
-    def update_memory(self, memory_id: str, content: str) -> Optional[MemoryItem]:
+    def update_memory(self, memory_id: str, content: str, persona_ids: Optional[List[str]] = None) -> Optional[MemoryItem]:
         """更新记忆"""
-        return self.storage.update(memory_id=memory_id, content=content)
+        return self.storage.update(memory_id=memory_id, content=content, persona_ids=persona_ids)
     
     def delete_memory(self, memory_id: str) -> bool:
         """删除记忆"""
@@ -316,7 +316,7 @@ class MemoryManager:
         
         return cleaned_response, actions
     
-    def apply_memory_actions(self, actions: List[MemoryActionItem], persona_id=None) -> Dict[str, Any]:
+    def apply_memory_actions(self, actions: List[MemoryActionItem], persona_ids=None) -> Dict[str, Any]:
         """
         应用记忆操作
 
@@ -336,7 +336,7 @@ class MemoryManager:
                     self.storage.add(
                         content=action.content,
                         source="builtin_extraction",
-                        persona_id=persona_id
+                        persona_ids=persona_ids
                     )
                     results["added"] += 1
                 
@@ -479,7 +479,7 @@ class MemoryManager:
                 results["added"], results["updated"], results["deleted"],
             )
 
-    async def process_builtin_memory_extraction(self, response_text: str, persona_id=None) -> str:
+    async def process_builtin_memory_extraction(self, response_text: str, persona_ids=None) -> str:
         """处理内置模式的记忆提取，返回清理后的回复文本（原 main.py 中的独立函数）"""
         logger.debug("[记忆提取] 开始处理响应，长度: %s", len(response_text))
 
@@ -494,7 +494,7 @@ class MemoryManager:
             logger.debug("[记忆提取] 提取到 %s 个记忆操作:", len(actions))
             for i, action in enumerate(actions):
                 logger.debug("  %s. %s: %s", i + 1, action.action, action.content or action.id)
-            results = self.apply_memory_actions(actions, persona_id=persona_id)
+            results = self.apply_memory_actions(actions, persona_ids=persona_ids)
             logger.debug(
                 "[记忆提取] 应用结果: 添加%s, 更新%s, 删除%s",
                 results["added"], results["updated"], results["deleted"],

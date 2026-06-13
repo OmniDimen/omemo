@@ -16,13 +16,13 @@
             margin: 0;
             padding: 20px;
         }
-        
+
         .login-container {
             width: 100%;
             max-width: 420px;
             animation: fadeInUp 0.5s ease-out;
         }
-        
+
         @keyframes fadeInUp {
             from {
                 opacity: 0;
@@ -33,19 +33,19 @@
                 transform: translateY(0);
             }
         }
-        
+
         .login-card {
             background: var(--card-bg);
             border-radius: 20px;
             padding: 48px 40px;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
-        
+
         .login-header {
             text-align: center;
             margin-bottom: 40px;
         }
-        
+
         .login-logo {
             width: 72px;
             height: 72px;
@@ -57,34 +57,34 @@
             margin: 0 auto 24px;
             box-shadow: 0 10px 30px -5px rgba(2, 128, 255, 0.4);
         }
-        
+
         .login-logo i {
             font-size: 32px;
             color: white;
         }
-        
+
         .login-title {
             font-size: 28px;
             font-weight: 700;
             color: var(--text-primary);
             margin-bottom: 8px;
         }
-        
+
         .login-subtitle {
             color: var(--text-secondary);
             font-size: 15px;
         }
-        
+
         .login-form {
             display: flex;
             flex-direction: column;
             gap: 24px;
         }
-        
+
         .input-group {
             position: relative;
         }
-        
+
         .input-group i {
             position: absolute;
             left: 16px;
@@ -93,7 +93,7 @@
             color: var(--text-secondary);
             font-size: 16px;
         }
-        
+
         .input-group input {
             width: 100%;
             padding: 16px 16px 16px 48px;
@@ -102,19 +102,20 @@
             font-size: 15px;
             transition: all 0.2s;
             background: var(--bg-color);
+            box-sizing: border-box;
         }
-        
+
         .input-group input:focus {
             outline: none;
             border-color: var(--primary-color);
             background: white;
             box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
         }
-        
+
         .input-group input::placeholder {
             color: var(--text-secondary);
         }
-        
+
         .login-btn {
             width: 100%;
             padding: 16px;
@@ -131,26 +132,26 @@
             justify-content: center;
             gap: 8px;
         }
-        
+
         .login-btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 10px 30px -5px rgba(2, 128, 255, 0.4);
         }
-        
+
         .login-btn:active {
             transform: translateY(0);
         }
-        
+
         .login-btn:disabled {
             opacity: 0.7;
             cursor: not-allowed;
             transform: none;
         }
-        
+
         .login-btn i {
             font-size: 16px;
         }
-        
+
         .login-error {
             background: rgba(239, 68, 68, 0.1);
             color: var(--danger-color);
@@ -161,32 +162,38 @@
             align-items: center;
             gap: 8px;
         }
-        
+
         .login-error.show {
             display: flex;
         }
-        
+
+        .login-hint {
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--primary-color);
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .login-hint.show {
+            display: flex;
+        }
+
         .login-footer {
             margin-top: 32px;
             text-align: center;
             color: var(--text-secondary);
             font-size: 13px;
         }
-        
-        .login-footer a {
-            color: var(--primary-color);
-            text-decoration: none;
-        }
-        
-        .login-footer a:hover {
-            text-decoration: underline;
-        }
 
         @media (max-width: 480px) {
             .login-card {
                 padding: 32px 24px;
             }
-            
+
             .login-title {
                 font-size: 24px;
             }
@@ -200,69 +207,123 @@
                 <div class="login-logo">
                     <i class="fas fa-brain"></i>
                 </div>
-                <h1 class="login-title">欢迎回来</h1>
-                <p class="login-subtitle">请输入您的 Session Key 以继续访问</p>
+                <h1 class="login-title" id="login-title">欢迎回来</h1>
+                <p class="login-subtitle" id="login-subtitle">请输入管理员密码以继续访问</p>
             </div>
-            
+
             <form class="login-form" id="login-form">
                 <div class="login-error" id="login-error">
                     <i class="fas fa-exclamation-circle"></i>
-                    <span id="error-message">Session Key 无效</span>
+                    <span id="error-message">密码错误</span>
                 </div>
-                
+
+                <div class="login-hint" id="login-hint">
+                    <i class="fas fa-info-circle"></i>
+                    <span id="hint-message">首次使用，请设置管理员密码（不少于6位）</span>
+                </div>
+
                 <div class="input-group">
-                    <i class="fas fa-key"></i>
-                    <input type="password" id="session-key" placeholder="请输入 Session Key" required autocomplete="off">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" id="admin-password" placeholder="请输入管理员密码" required autocomplete="off">
                 </div>
-                
+
+                <div class="input-group" id="confirm-group" style="display: none;">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" id="confirm-password" placeholder="请再次输入密码" autocomplete="off">
+                </div>
+
                 <button type="submit" class="login-btn" id="login-btn">
                     <i class="fas fa-sign-in-alt"></i>
                     <span>登录</span>
                 </button>
             </form>
-            
+
             <div class="login-footer">
-                <p>Session Key 可在「设置」中生成</p>
+                <p>WebUI 管理密码与 API 访问密钥相互独立</p>
             </div>
         </div>
     </div>
-    
+
     <div class="toast-container" id="toast-container"></div>
-    
+
     <script>
         const loginForm = document.getElementById('login-form');
         const loginBtn = document.getElementById('login-btn');
         const loginError = document.getElementById('login-error');
         const errorMessage = document.getElementById('error-message');
-        const sessionKeyInput = document.getElementById('session-key');
-        
+        const loginHint = document.getElementById('login-hint');
+        const hintMessage = document.getElementById('hint-message');
+        const passwordInput = document.getElementById('admin-password');
+        const confirmGroup = document.getElementById('confirm-group');
+        const confirmInput = document.getElementById('confirm-password');
+        const loginTitle = document.getElementById('login-title');
+        const loginSubtitle = document.getElementById('login-subtitle');
+
+        let isFirstTime = false;
+
+        // 检查 admin 是否已配置
+        (async function checkAdminStatus() {
+            try {
+                const response = await fetch('/api/auth/status');
+                const data = await response.json();
+
+                // 如果已登录，直接跳转
+                if (data.logged_in) {
+                    window.location.href = '/';
+                    return;
+                }
+
+                // 如果 admin 未配置，进入首次设置模式
+                if (!data.admin_configured) {
+                    isFirstTime = true;
+                    loginTitle.textContent = '设置密码';
+                    loginSubtitle.textContent = '首次使用，请设置管理员密码';
+                    loginBtn.innerHTML = '<i class="fas fa-check"></i> <span>设置密码</span>';
+                    confirmGroup.style.display = 'block';
+                    loginHint.classList.add('show');
+                }
+            } catch (error) {
+                console.error('Auth status check failed:', error);
+            }
+        })();
+
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
-            const sessionKey = sessionKeyInput.value.trim();
-            if (!sessionKey) {
-                showError('请输入 Session Key');
+
+            const password = passwordInput.value.trim();
+            if (!password) {
+                showError('请输入密码');
                 return;
             }
-            
+
+            if (isFirstTime) {
+                const confirmPw = confirmInput.value.trim();
+                if (password !== confirmPw) {
+                    showError('两次输入的密码不一致');
+                    return;
+                }
+                if (password.length < 6) {
+                    showError('密码长度不能少于6位');
+                    return;
+                }
+            }
+
             loginBtn.disabled = true;
             loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>验证中...</span>';
             loginError.classList.remove('show');
-            
+
             try {
-                const response = await fetch('/api/auth/login', {
+                const response = await fetch('/api/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_key: sessionKey })
+                    body: JSON.stringify({ password: password })
                 });
-                
+
                 const data = await response.json();
-                
-                if (response.ok) {
-                    // 保存 session key 到 localStorage
-                    localStorage.setItem('session_key', sessionKey);
-                    localStorage.setItem('logged_in', 'true');
-                    
+
+                if (response.ok && data.success) {
+                    // 保存 token 到 localStorage
+                    localStorage.setItem('admin_token', data.token);
                     // 跳转到主页
                     window.location.href = '/';
                 } else {
@@ -272,44 +333,18 @@
                 showError('网络错误，请稍后重试');
             } finally {
                 loginBtn.disabled = false;
-                loginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> <span>登录</span>';
+                if (isFirstTime) {
+                    loginBtn.innerHTML = '<i class="fas fa-check"></i> <span>设置密码</span>';
+                } else {
+                    loginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> <span>登录</span>';
+                }
             }
         });
-        
+
         function showError(message) {
             errorMessage.textContent = message;
             loginError.classList.add('show');
         }
-        
-        // 检查是否已登录
-        (async function checkAuth() {
-            try {
-                const response = await fetch('/api/auth/status');
-                const data = await response.json();
-                
-                if (!data.login_enabled) {
-                    // 登录未启用，直接跳转
-                    window.location.href = '/';
-                    return;
-                }
-                
-                // 检查本地存储的 session key 是否有效
-                const savedKey = localStorage.getItem('session_key');
-                if (savedKey) {
-                    const verifyResponse = await fetch('/api/auth/login', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ session_key: savedKey })
-                    });
-                    
-                    if (verifyResponse.ok) {
-                        window.location.href = '/';
-                    }
-                }
-            } catch (error) {
-                console.error('Auth check failed:', error);
-            }
-        })();
     </script>
 </body>
 </html>

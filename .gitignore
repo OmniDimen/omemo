@@ -2,3 +2,7 @@ config/
 data/
 __pycache__/
 venv/
+*.bak
+*.bak2
+test_data/
+patch_bind.py

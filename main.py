@@ -18,8 +18,12 @@ from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from config import config, EndpointConfig, MemorySettings, debug_print, setup_logging
-from config import generate_session_key, verify_session_key, set_session_key, clear_session_key
+from config import config, EndpointConfig, MemorySettings, AccessKey, debug_print, setup_logging
+from config import (
+    is_admin_configured, set_admin_password, verify_admin_password,
+    generate_admin_token, store_admin_token, verify_admin_token,
+    revoke_admin_token, cleanup_expired_tokens,
+)
 from models import (
     ChatMessage,
     OpenAIChatRequest,
@@ -110,30 +114,126 @@ async def setup_guard(request: Request, call_next):
     return await call_next(request)
 
 
+# WebUI Admin 登录鉴权中间件（独立于 access key）
+@app.middleware("http")
+async def admin_auth_guard(request: Request, call_next):
+    path = request.url.path
+
+    # 只拦截 /api/ 路径
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    # 白名单放行
+    if path in ("/api/login", "/api/auth/status", "/api/setup", "/api/models/fetch"):
+        return await call_next(request)
+
+    # 如果 admin 密码未配置（首次使用），放行让前端引导设置
+    if not is_admin_configured():
+        return await call_next(request)
+
+    # 检查 Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+
+    if not token or not verify_admin_token(token):
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "未登录或登录已过期，请重新登录"}
+        )
+
+    return await call_next(request)
+
+
+# 访问密钥鉴权中间件
+@app.middleware("http")
+async def access_key_guard(request: Request, call_next):
+    path = request.url.path
+
+    # === 白名单放行（WebUI 自身资源和管理接口，不走 access key） ===
+    # GET / 首页
+    if path == "/" and request.method == "GET":
+        return await call_next(request)
+    # 静态资源、setup 相关、所有 /api/ 管理接口（走登录认证）、/login、/personas 等页面
+    if path.startswith(("/static/", "/setup", "/api/", "/login", "/favicon", "/health")):
+        return await call_next(request)
+
+    # === access key 只拦截 /v1/ 开头的对外 API 请求 ===
+    if not path.startswith("/v1/"):
+        # 非 /v1/ 路径，直接放行
+        return await call_next(request)
+
+    # 如果没有启用的访问密钥，则不要求鉴权（首次配置场景）
+    if not config.has_enabled_access_keys():
+        return await call_next(request)
+
+    # 检查 Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    key_value = None
+    if auth_header.startswith("Bearer "):
+        key_value = auth_header[7:]
+
+    if not key_value or not config.verify_access_key(key_value):
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "未授权访问，请提供有效的访问密钥"}
+        )
+
+    return await call_next(request)
+
+
 # 静态文件和模板
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # ==================== 辅助函数 ====================
 
+def parse_provider_model(model_str: str):
+    """解析 provider/model_name 格式，返回 (provider_name, real_model_name)
+    如果没有 provider 前缀，返回 (None, model_str)
+    """
+    if "/" in model_str:
+        provider_name, real_model = model_str.split("/", 1)
+        # 验证 provider_name 是否是有效的端点名称
+        endpoint = config.get_endpoint_by_provider_model(provider_name, real_model)
+        if endpoint:
+            return provider_name, real_model
+    return None, model_str
+
+
 def get_adapter_for_model(model: str):
-    """根据模型名称获取适配器（支持别名，检测冲突）"""
-    conflicts = config.get_model_conflicts()
-    if model in conflicts:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"模型 '{model}' 存在冲突，请在「模型列表」中设置别名。冲突端点: {', '.join(conflicts[model])}"
-        )
+    """根据模型名称获取适配器（支持别名，检测冲突，支持 provider/model_name 格式）"""
+    # 尝试解析 provider/model_name 格式
+    provider_name, real_model = parse_provider_model(model)
 
-    endpoint = config.get_endpoint_by_model(model)
+    if provider_name:
+        # 有供应商前缀，直接按供应商+模型名查找
+        endpoint = config.get_endpoint_by_provider_model(provider_name, real_model)
+        if not endpoint:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"未找到模型 '{provider_name}/{real_model}' 的配置"
+            )
+        actual_model = config.get_actual_model_name_by_provider(provider_name, real_model)
+    else:
+        # 无供应商前缀，使用原有逻辑（向后兼容）
+        conflicts = config.get_model_conflicts()
+        if real_model in conflicts:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"模型 '{real_model}' 存在冲突，请在「模型列表」中设置别名。冲突端点: {', '.join(conflicts[real_model])}"
+            )
 
-    if not endpoint:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"未找到模型 '{model}' 的配置"
-        )
+        endpoint = config.get_endpoint_by_model(real_model)
 
-    actual_model = config.get_actual_model_name(model)
+        if not endpoint:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"未找到模型 '{real_model}' 的配置"
+            )
+
+        actual_model = config.get_actual_model_name(real_model)
 
     if endpoint.provider == "openai":
         return OpenAIAdapter(endpoint.url, endpoint.api_key), endpoint, "openai", actual_model
@@ -215,8 +315,19 @@ async def do_setup(data: dict):
 
 @app.get("/api/config/endpoints")
 async def get_endpoints():
-    """获取所有端点配置"""
-    return [ep.model_dump() for ep in config.endpoints]
+    """获取所有端点配置（不暴露上游API密钥）"""
+    result = []
+    for ep in config.endpoints:
+        ep_dict = ep.model_dump()
+        # 掩码处理上游API密钥，客户端不需要接触真实密钥
+        if ep_dict.get("api_key"):
+            key = ep_dict["api_key"]
+            if len(key) > 8:
+                ep_dict["api_key"] = key[:4] + "****" + key[-4:]
+            else:
+                ep_dict["api_key"] = "****"
+        result.append(ep_dict)
+    return result
 
 
 @app.post("/api/config/endpoints")
@@ -232,7 +343,17 @@ async def add_endpoint(endpoint: EndpointConfig):
 
 @app.put("/api/config/endpoints/{name}")
 async def update_endpoint(name: str, endpoint: EndpointConfig):
-    """更新端点配置"""
+    """更新端点配置（如果api_key为掩码则保留原值）"""
+    # 查找原始端点
+    original = next((ep for ep in config.endpoints if ep.name == name), None)
+    if not original:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="端点不存在"
+        )
+    # 如果前端发来的api_key是掩码格式（含****），则保留原始密钥
+    if "****" in endpoint.api_key:
+        endpoint.api_key = original.api_key
     if not config.update_endpoint(name, endpoint):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -336,21 +457,31 @@ async def get_memories(keyword: Optional[str] = None, persona_id: Optional[str] 
 
 @app.get("/api/memories/by-persona")
 async def get_memories_by_persona():
-    """按人格分组返回记忆"""
+    """按人格分组返回记忆（一条记忆可出现在多个分组中）"""
     all_memories = manager.get_all_memories(persona_id=None)
     personas = persona_store.get_all()
     persona_map = {p["id"]: p["name"] for p in personas}
 
     groups: Dict[str, Dict] = {}
     for m in all_memories:
-        pid = m.persona_id or ""
-        if pid not in groups:
-            groups[pid] = {
-                "persona_id": pid or None,
-                "persona_name": persona_map.get(pid, "未绑定人格") if pid else "未绑定人格",
-                "memories": []
-            }
-        groups[pid]["memories"].append(m.model_dump())
+        if m.persona_ids:
+            for pid in m.persona_ids:
+                if pid not in groups:
+                    groups[pid] = {
+                        "persona_id": pid,
+                        "persona_name": persona_map.get(pid, "未绑定人格"),
+                        "memories": []
+                    }
+                groups[pid]["memories"].append(m.model_dump())
+        else:
+            # 未绑定人格
+            if "" not in groups:
+                groups[""] = {
+                    "persona_id": None,
+                    "persona_name": "未绑定人格",
+                    "memories": []
+                }
+            groups[""]["memories"].append(m.model_dump())
 
     # 排序：有 persona_id 的在前，按 persona 名称排序；未绑定的放最后
     sorted_groups = sorted(
@@ -361,7 +492,7 @@ async def get_memories_by_persona():
 
 
 @app.post("/api/memories")
-async def add_memory(data: Dict[str, str]):
+async def add_memory(data: Dict[str, Any]):
     """添加记忆"""
     content = data.get("content", "").strip()
     if not content:
@@ -370,13 +501,15 @@ async def add_memory(data: Dict[str, str]):
             detail="记忆内容不能为空"
         )
 
-    persona_id = data.get("persona_id") or None
-    memory = manager.add_memory(content, source="manual", persona_id=persona_id)
+    persona_ids = data.get("persona_ids", [])
+    if isinstance(persona_ids, str):
+        persona_ids = [persona_ids] if persona_ids else []
+    memory = manager.add_memory(content, source="manual", persona_ids=persona_ids)
     return memory.model_dump()
 
 
 @app.put("/api/memories/{memory_id}")
-async def update_memory(memory_id: str, data: Dict[str, str]):
+async def update_memory(memory_id: str, data: Dict[str, Any]):
     """更新记忆"""
     content = data.get("content", "").strip()
     if not content:
@@ -384,14 +517,17 @@ async def update_memory(memory_id: str, data: Dict[str, str]):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="记忆内容不能为空"
         )
-    
-    memory = manager.update_memory(memory_id, content)
+
+    persona_ids = data.get("persona_ids", [])
+    if isinstance(persona_ids, str):
+        persona_ids = [persona_ids] if persona_ids else []
+    memory = manager.update_memory(memory_id, content, persona_ids=persona_ids)
     if not memory:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="记忆不存在"
         )
-    
+
     return memory.model_dump()
 
 
@@ -580,76 +716,152 @@ async def migrate_persona_backend(data: Dict[str, str]):
     return {"success": True, "message": f"已迁移 {migrated} 个人格到 {target} 后端", "migrated": migrated}
 
 
-# ==================== 登录认证API ====================
+# ==================== WebUI 登录认证API（独立于 access key） ====================
 
 @app.get("/api/auth/status")
-async def get_auth_status():
-    """获取登录认证状态"""
+async def get_auth_status(request: Request):
+    """获取 WebUI 登录认证状态"""
+    admin_configured = is_admin_configured()
+    logged_in = False
+
+    if admin_configured:
+        # 检查请求中的 token
+        auth_header = request.headers.get("Authorization", "")
+        token = None
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        if token:
+            logged_in = verify_admin_token(token)
+
     return {
-        "login_enabled": config.memory_settings.login_enabled,
-        "has_session_key": config.memory_settings.session_key_hash is not None
+        "admin_configured": admin_configured,
+        "logged_in": logged_in,
     }
 
 
-@app.post("/api/auth/login")
-async def login(data: Dict[str, str]):
-    """登录验证"""
-    session_key = data.get("session_key", "").strip()
-    
-    if not config.memory_settings.login_enabled:
-        return {"success": True, "message": "登录功能未启用"}
-    
-    if not session_key:
+@app.post("/api/login")
+async def admin_login(data: Dict[str, str]):
+    """WebUI 管理员登录
+
+    - 如果 admin 密码未设置（首次使用）：设置密码并自动登录
+    - 如果 admin 密码已设置：验证密码
+    """
+    password = data.get("password", "").strip()
+
+    if not password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Session key不能为空"
+            detail="密码不能为空"
         )
-    
-    if verify_session_key(session_key):
-        return {"success": True, "message": "登录成功"}
-    else:
+
+    if not is_admin_configured():
+        # 首次使用：设置密码
+        if len(password) < 6:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="密码长度不能少于6位"
+            )
+        set_admin_password(password)
+        # 设置成功，自动登录
+        token = generate_admin_token()
+        store_admin_token(token)
+        return {"success": True, "token": token, "message": "密码设置成功，已自动登录"}
+
+    # 已配置：验证密码
+    if not verify_admin_password(password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session key无效"
+            detail="密码错误"
         )
 
+    # 登录成功，生成 token
+    token = generate_admin_token()
+    store_admin_token(token)
+    return {"success": True, "token": token, "message": "登录成功"}
 
-@app.post("/api/auth/enable")
-async def enable_login():
-    """启用登录功能（生成新的session key）"""
-    # 总是生成新的session key
-    new_key = generate_session_key()
-    set_session_key(new_key)
-    config.memory_settings.login_enabled = True
-    config.save_memory_settings()
+
+@app.post("/api/logout")
+async def admin_logout(request: Request):
+    """WebUI 管理员登出"""
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+
+    if token:
+        revoke_admin_token(token)
+
+    # 定期清理过期 token
+    cleanup_expired_tokens()
+
+    return {"success": True, "message": "已退出登录"}
+
+
+# ==================== 访问密钥管理API ====================
+
+@app.get("/api/access-keys")
+async def get_access_keys():
+    """获取所有访问密钥（掩码显示）"""
+    return [
+        {
+            "id": key.id,
+            "name": key.name,
+            "masked_key": key.masked_key,
+            "enabled": key.enabled,
+            "created_at": key.created_at,
+        }
+        for key in config.access_keys
+    ]
+
+
+@app.post("/api/access-keys")
+async def create_access_key(data: Dict[str, str]):
+    """创建新的访问密钥（仅此次返回明文）"""
+    name = data.get("name", "").strip()
+    key_value, access_key = config.add_access_key(name)
     return {
         "success": True,
-        "session_key": new_key,
-        "message": "请妥善保存此Key，关闭后将无法再次查看"
+        "key": key_value,
+        "id": access_key.id,
+        "name": access_key.name,
+        "masked_key": access_key.masked_key,
+        "message": "请立即复制并妥善保存此密钥，关闭后将无法再次查看"
     }
 
 
-@app.post("/api/auth/disable")
-async def disable_login():
-    """禁用登录功能（销毁session key）"""
-    config.memory_settings.login_enabled = False
-    clear_session_key()
-    config.save_memory_settings()
-    return {"success": True, "message": "登录功能已禁用，Session Key已销毁"}
+@app.delete("/api/access-keys/{key_id}")
+async def delete_access_key(key_id: str):
+    """删除访问密钥"""
+    if not config.delete_access_key(key_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="密钥不存在"
+        )
+    return {"success": True}
 
 
-@app.post("/api/auth/reset-key")
-async def reset_session_key():
-    """重置session key"""
-    # 生成新的key
-    new_key = generate_session_key()
-    set_session_key(new_key)
-    
-    return {
-        "success": True,
-        "session_key": new_key,
-        "message": "请妥善保存此Key，关闭后将无法再次查看"
-    }
+@app.put("/api/access-keys/{key_id}/toggle")
+async def toggle_access_key(key_id: str, data: Dict[str, bool]):
+    """启用/禁用访问密钥"""
+    enabled = data.get("enabled", True)
+    if not config.toggle_access_key(key_id, enabled):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="密钥不存在"
+        )
+    return {"success": True}
+
+
+@app.put("/api/access-keys/{key_id}/rename")
+async def rename_access_key(key_id: str, data: Dict[str, str]):
+    """重命名访问密钥"""
+    name = data.get("name", "").strip()
+    if not config.rename_access_key(key_id, name):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="密钥不存在"
+        )
+    return {"success": True}
 
 
 @app.post("/api/debug/preview-system-prompt")
@@ -715,10 +927,13 @@ async def list_models():
             # 可用名称：优先别名，没有别名就用原名
             available_name = alias if alias else model
 
-            if available_name not in seen_names:
-                seen_names.add(available_name)
+            # 带供应商前缀的显示名称，防止不同供应商的同名模型混淆
+            display_name = f"{ep.name}/{available_name}"
+
+            if display_name not in seen_names:
+                seen_names.add(display_name)
                 models.append(ModelInfo(
-                    id=available_name,
+                    id=display_name,
                     owned_by=ep.provider
                 ))
 
@@ -742,19 +957,7 @@ async def list_models():
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     """聊天完成接口 - 支持OpenAI格式"""
-    # 验证登录状态
-    if config.memory_settings.login_enabled:
-        auth_header = request.headers.get("Authorization", "")
-        session_key = None
-        if auth_header.startswith("Bearer "):
-            session_key = auth_header[7:]
-        
-        if not session_key or not verify_session_key(session_key):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="未授权访问，请提供有效的Session Key"
-            )
-    
+    # 鉴权已由 access_key_guard 中间件处理
     try:
         body = await request.json()
         openai_request = OpenAIChatRequest(**body)
@@ -839,7 +1042,7 @@ async def chat_completions(request: Request):
                                 # 检查是否包含</memory>结束标签
                                 if not memory_processed and '</memory>' in text:
                                     debug_print(f"[流式响应] 检测到</memory>结束，开始提取记忆")
-                                    if persona_id: await manager.process_builtin_memory_extraction(full_response, persona_id=persona_id)
+                                    if persona_id: await manager.process_builtin_memory_extraction(full_response, persona_ids=[persona_id])
                                     memory_processed = True
                                 
                                 # 只在未开始memory标签时输出
@@ -857,7 +1060,7 @@ async def chat_completions(request: Request):
                             debug_print(f"[流式响应] Anthropic 收到 message_stop, 总长度: {len(full_response)}")
                             # 处理内置模式的记忆提取（如果还没处理）
                             if config.memory_settings.memory_mode == "builtin" and not memory_processed:
-                                if persona_id: await manager.process_builtin_memory_extraction(full_response, persona_id=persona_id)
+                                if persona_id: await manager.process_builtin_memory_extraction(full_response, persona_ids=[persona_id])
                             
                             yield f"data: {json.dumps({'choices': [{'finish_reason': 'stop'}]}, ensure_ascii=False)}\n\n"
                             yield "data: [DONE]\n\n"
@@ -890,7 +1093,7 @@ async def chat_completions(request: Request):
                         if block.get("type") == "text":
                             response_text += block.get("text", "")
                     
-                    cleaned_text = (await manager.process_builtin_memory_extraction(response_text, persona_id=persona_id)) if persona_id else response_text
+                    cleaned_text = (await manager.process_builtin_memory_extraction(response_text, persona_ids=[persona_id])) if persona_id else response_text
                     # 更新响应内容
                     if openai_response.choices:
                         openai_response.choices[0].message["content"] = cleaned_text
@@ -1074,7 +1277,7 @@ async def chat_completions(request: Request):
                     
                     # 处理记忆提取
                     if config.memory_settings.memory_mode == "builtin" and not memory_processed:
-                        if persona_id: await manager.process_builtin_memory_extraction(full_content)
+                        if persona_id: await manager.process_builtin_memory_extraction(full_content, persona_ids=[persona_id])
                     
                     # 发送结束标记
                     if in_memory or tag_buffer:
@@ -1098,7 +1301,7 @@ async def chat_completions(request: Request):
                 # 处理内置模式的记忆提取
                 if config.memory_settings.memory_mode == "builtin":
                     response_text = response.choices[0].message.get("content", "") if response.choices else ""
-                    cleaned_text = (await manager.process_builtin_memory_extraction(response_text, persona_id=persona_id)) if persona_id else response_text
+                    cleaned_text = (await manager.process_builtin_memory_extraction(response_text, persona_ids=[persona_id])) if persona_id else response_text
                     if response.choices:
                         response.choices[0].message["content"] = cleaned_text
                 
@@ -1128,19 +1331,7 @@ async def chat_completions(request: Request):
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic格式的聊天完成接口"""
-    # 验证登录状态
-    if config.memory_settings.login_enabled:
-        auth_header = request.headers.get("Authorization", "")
-        session_key = None
-        if auth_header.startswith("Bearer "):
-            session_key = auth_header[7:]
-        
-        if not session_key or not verify_session_key(session_key):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="未授权访问，请提供有效的Session Key"
-            )
-    
+    # 鉴权已由 access_key_guard 中间件处理
     try:
         body = await request.json()
         anthropic_request = AnthropicChatRequest(**body)
@@ -1224,7 +1415,7 @@ async def anthropic_messages(request: Request):
                     
                     # 处理记忆提取
                     if config.memory_settings.memory_mode == "builtin":
-                        if persona_id: await manager.process_builtin_memory_extraction(full_response, persona_id=persona_id)
+                        if persona_id: await manager.process_builtin_memory_extraction(full_response, persona_ids=[persona_id])
                     
                     # 外接模型模式
                     if config.memory_settings.memory_mode == "external":
@@ -1247,7 +1438,7 @@ async def anthropic_messages(request: Request):
                         if block.get("type") == "text":
                             response_text += block.get("text", "")
                     
-                    cleaned_text = (await manager.process_builtin_memory_extraction(response_text, persona_id=persona_id)) if persona_id else response_text
+                    cleaned_text = (await manager.process_builtin_memory_extraction(response_text, persona_ids=[persona_id])) if persona_id else response_text
                     # 更新响应内容
                     for block in response.get("content", []):
                         if block.get("type") == "text":

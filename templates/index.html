@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Omni Memory - 带记忆功能的API中转站</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=4">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -39,6 +39,10 @@
                 <a href="#personas" class="nav-item" data-section="personas">
                     <i class="fas fa-masks-theater"></i>
                     <span>人格管理</span>
+                </a>
+                <a href="#access-keys" class="nav-item" data-section="access-keys">
+                    <i class="fas fa-key"></i>
+                    <span>访问密钥</span>
                 </a>
                 <a href="#general-settings" class="nav-item" data-section="general-settings">
                     <i class="fas fa-sliders-h"></i>
@@ -287,6 +291,28 @@
                 </div>
             </section>
 
+            <!-- 访问密钥页面 -->
+            <section id="access-keys-section" class="section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>访问密钥管理</h2>
+                        <button class="btn btn-primary" id="generate-key-btn">
+                            <i class="fas fa-plus"></i> 生成新密钥
+                        </button>
+                    </div>
+                    <div class="form-container">
+                        <div class="form-group">
+                            <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
+                                生成访问密钥后，所有 /v1/ API 请求（如 /v1/chat/completions）必须携带有效密钥，否则返回 401。密钥格式为 <code>om-xxxxxxxxxxxx</code>。访问密钥不影响 WebUI 管理面板的访问。
+                            </p>
+                            <div id="access-keys-list" class="access-keys-list">
+                                <!-- 动态填充 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- 通用设置页面 -->
             <section id="general-settings-section" class="section">
                 <div class="card">
@@ -302,24 +328,22 @@
                             <label class="form-label">登录认证</label>
                             <div class="toggle-group">
                                 <label class="toggle-item">
-                                    <input type="checkbox" id="login-toggle">
-                                    <span class="toggle-slider"></span>
                                     <div class="toggle-content">
-                                        <strong>启用登录认证</strong>
-                                        <small>开启后访问页面和调用API需要验证Session Key</small>
+                                        <strong>WebUI 管理密码</strong>
+                                        <small>访问 WebUI 需要输入管理员密码（独立于 API 访问密钥）</small>
                                     </div>
                                 </label>
                             </div>
-                            <div id="login-actions" style="margin-top: 16px; display: none;">
-                                <button type="button" class="btn btn-secondary" id="reset-key-btn" style="margin-right: 8px;">
-                                    <i class="fas fa-sync"></i> 重置Key
-                                </button>
+                            <div style="margin-top: 12px;">
                                 <button type="button" class="btn btn-danger" id="logout-btn" onclick="logout()">
                                     <i class="fas fa-sign-out-alt"></i> 退出登录
                                 </button>
+                                <p style="margin-top: 8px; font-size: 13px; color: var(--text-secondary);">
+                                    密码存储于 config/admin.json，修改密码请直接替换该文件
+                                </p>
                             </div>
                         </div>
-                        
+
                         <!-- 调试模式 -->
                         <div class="form-group">
                             <label class="form-label">调试模式</label>
@@ -446,12 +470,12 @@
         </div>
     </div>
 
-    <!-- Session Key 显示弹窗 -->
-    <div class="modal" id="session-key-modal">
+    <!-- 访问密钥显示弹窗 -->
+    <div class="modal" id="access-key-modal">
         <div class="modal-content" style="max-width: 500px;">
             <div class="modal-header">
-                <h3>Session Key</h3>
-                <button class="btn-close" id="close-session-key-modal">&times;</button>
+                <h3>访问密钥已创建</h3>
+                <button class="btn-close" id="close-access-key-modal">&times;</button>
             </div>
             <div class="modal-body">
                 <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
@@ -460,20 +484,20 @@
                         <span>重要提示</span>
                     </div>
                     <p style="color: var(--text-secondary); font-size: 14px; margin: 0;">
-                        请立即复制并妥善保存此 Key，关闭后将无法再次查看。此 Key 用于访问 API 和登录验证。
+                        请立即复制并妥善保存此密钥，关闭后将无法再次查看。所有 API 请求都需要携带此密钥进行鉴权。
                     </p>
                 </div>
-                <div style="background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; font-family: monospace; font-size: 14px; word-break: break-all; line-height: 1.6; cursor: pointer;" id="session-key-display" onclick="copySessionKey()">
+                <div style="background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; font-family: monospace; font-size: 14px; word-break: break-all; line-height: 1.6; cursor: pointer;" id="access-key-display" onclick="copyAccessKey()">
                 </div>
                 <p style="color: var(--text-secondary); font-size: 12px; margin-top: 8px; text-align: center;">
                     <i class="fas fa-info-circle"></i> 点击上方文本框可复制
                 </p>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-primary" id="copy-session-key-btn" onclick="copySessionKey()">
+                <button class="btn btn-primary" id="copy-access-key-btn" onclick="copyAccessKey()">
                     <i class="fas fa-copy"></i> 复制到剪贴板
                 </button>
-                <button class="btn btn-secondary" id="close-session-key-btn">我已保存</button>
+                <button class="btn btn-secondary" id="close-access-key-btn">我已保存</button>
             </div>
         </div>
     </div>
@@ -519,6 +543,12 @@
             <div class="modal-body">
                 <form id="memory-form">
                     <input type="hidden" id="memory-id">
+                    <div class="form-group">
+                        <label>绑定人格（可多选，不勾选则不绑定）</label>
+                        <div id="memory-persona-checkboxes" class="persona-checkbox-list">
+                            <!-- 动态填充 -->
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label>记忆内容</label>
                         <textarea id="memory-content" rows="4" required placeholder="输入要记忆的内容..."></textarea>
@@ -571,7 +601,7 @@
             </div>
         </div>
     </div>
-    <script src="/static/js/app.js"></script>
-    <script src="/static/js/persona.js"></script>
+    <script src="/static/js/app.js?v=5"></script>
+    <script src="/static/js/persona.js?v=5"></script>
 </body>
 </html>

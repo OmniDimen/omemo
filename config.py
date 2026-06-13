@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 import hashlib
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -38,6 +39,16 @@ class EndpointConfig(BaseModel):
     models: List[str] = Field(default_factory=list, description="支持的模型列表")
     enabled: bool = Field(default=True, description="是否启用")
     model_aliases: Dict[str, str] = Field(default_factory=dict, description="模型别名映射: 别名 -> 实际模型名")
+
+
+class AccessKey(BaseModel):
+    """访问密钥配置"""
+    id: str = Field(..., description="密钥唯一ID")
+    name: str = Field(default="", description="密钥名称/备注")
+    key_hash: str = Field(..., description="密钥的SHA256哈希值")
+    masked_key: str = Field(..., description="掩码显示的密钥，如 om-abcd****xyzw")
+    enabled: bool = Field(default=True, description="是否启用")
+    created_at: str = Field(default="", description="创建时间")
 
 
 class MemorySettings(BaseModel):
@@ -101,32 +112,37 @@ class Settings(BaseSettings):
 
 class ConfigManager:
     """配置管理器"""
-    
+
     def __init__(self):
         self.settings = Settings()
         self.endpoints: List[EndpointConfig] = []
         self.memory_settings = MemorySettings()
+        self.access_keys: List[AccessKey] = []
         self._ensure_directories()
         self._load_configs()
-    
+
     def _ensure_directories(self):
         """确保必要的目录存在"""
         Path(self.settings.data_dir).mkdir(parents=True, exist_ok=True)
         Path("./config").mkdir(parents=True, exist_ok=True)
-    
+
     def _get_endpoints_file(self) -> Path:
         return Path("./config/endpoints.json")
-    
+
     def _get_settings_file(self) -> Path:
         return Path("./config/settings.json")
-    
+
     def _get_old_settings_file(self) -> Path:
         return Path("./config/memory_settings.json")
-    
+
+    def _get_access_keys_file(self) -> Path:
+        return Path("./config/access_keys.json")
+
     def _load_configs(self):
         """加载所有配置"""
         self._load_endpoints()
         self._load_memory_settings()
+        self._load_access_keys()
     
     def _load_endpoints(self):
         """加载端点配置"""
@@ -146,7 +162,7 @@ class ConfigManager:
         """加载设置，如果旧文件存在则迁移到新文件"""
         old_file_path = self._get_old_settings_file()
         new_file_path = self._get_settings_file()
-        
+
         # 如果旧文件存在但新文件不存在，则迁移
         if old_file_path.exists() and not new_file_path.exists():
             try:
@@ -155,7 +171,7 @@ class ConfigManager:
                 print(f"已迁移配置文件: {old_file_path} -> {new_file_path}")
             except Exception as e:
                 print(f"迁移配置文件失败: {e}")
-        
+
         # 从新文件加载
         if new_file_path.exists():
             try:
@@ -165,6 +181,113 @@ class ConfigManager:
             except Exception as e:
                 print(f"加载设置失败: {e}")
                 self.memory_settings = MemorySettings()
+
+    def _load_access_keys(self):
+        """加载访问密钥配置"""
+        file_path = self._get_access_keys_file()
+        if file_path.exists():
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.access_keys = [AccessKey(**key) for key in data]
+            except Exception as e:
+                print(f"加载访问密钥失败: {e}")
+                self.access_keys = []
+        else:
+            self.access_keys = []
+
+    def save_access_keys(self) -> bool:
+        """保存访问密钥配置"""
+        file_path = self._get_access_keys_file()
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    [key.model_dump() for key in self.access_keys],
+                    f,
+                    ensure_ascii=False,
+                    indent=2
+                )
+            return True
+        except Exception as e:
+            print(f"保存访问密钥失败: {e}")
+            return False
+
+    @staticmethod
+    def generate_access_key_value() -> str:
+        """生成一个随机的访问密钥，格式 om-xxxxxxxxxxxx"""
+        random_part = secrets.token_urlsafe(12)[:16]
+        return f"om-{random_part}"
+
+    @staticmethod
+    def mask_access_key(key: str) -> str:
+        """生成密钥的掩码显示，如 om-abcd****xyzw"""
+        if len(key) <= 8:
+            return key[:4] + "****"
+        return key[:6] + "****" + key[-4:]
+
+    @staticmethod
+    def hash_access_key(key: str) -> str:
+        """对访问密钥进行SHA256哈希"""
+        return hashlib.sha256(key.encode()).hexdigest()
+
+    def add_access_key(self, name: str = "") -> tuple[str, AccessKey]:
+        """添加新的访问密钥，返回 (明文密钥, AccessKey对象)
+
+        明文密钥仅在此次调用中返回，之后无法再获取。
+        """
+        key_value = self.generate_access_key_value()
+        key_id = secrets.token_hex(8)
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        access_key = AccessKey(
+            id=key_id,
+            name=name or f"密钥-{len(self.access_keys) + 1}",
+            key_hash=self.hash_access_key(key_value),
+            masked_key=self.mask_access_key(key_value),
+            enabled=True,
+            created_at=now,
+        )
+        self.access_keys.append(access_key)
+        self.save_access_keys()
+        return key_value, access_key
+
+    def delete_access_key(self, key_id: str) -> bool:
+        """删除访问密钥"""
+        for i, key in enumerate(self.access_keys):
+            if key.id == key_id:
+                del self.access_keys[i]
+                return self.save_access_keys()
+        return False
+
+    def toggle_access_key(self, key_id: str, enabled: bool) -> bool:
+        """启用/禁用访问密钥"""
+        for key in self.access_keys:
+            if key.id == key_id:
+                key.enabled = enabled
+                return self.save_access_keys()
+        return False
+
+    def rename_access_key(self, key_id: str, name: str) -> bool:
+        """重命名访问密钥"""
+        for key in self.access_keys:
+            if key.id == key_id:
+                key.name = name
+                return self.save_access_keys()
+        return False
+
+    def verify_access_key(self, key_value: str) -> bool:
+        """验证访问密钥是否有效"""
+        if not self.access_keys:
+            return False
+        key_hash = self.hash_access_key(key_value)
+        return any(
+            key.key_hash == key_hash and key.enabled
+            for key in self.access_keys
+        )
+
+    def has_enabled_access_keys(self) -> bool:
+        """是否存在启用的访问密钥"""
+        return any(key.enabled for key in self.access_keys)
     
     def save_endpoints(self):
         """保存端点配置"""
@@ -249,6 +372,34 @@ class ConfigManager:
             if model in ep.models:
                 return model
         return model
+
+    def get_endpoint_by_provider_model(self, provider_name: str, model_name: str) -> Optional[EndpointConfig]:
+        """根据供应商前缀和模型名获取端点（支持别名）"""
+        for ep in self.endpoints:
+            if not ep.enabled:
+                continue
+            if ep.name != provider_name:
+                continue
+            # 检查别名
+            if model_name in ep.model_aliases:
+                return ep
+            # 检查原始模型名
+            if model_name in ep.models:
+                return ep
+        return None
+
+    def get_actual_model_name_by_provider(self, provider_name: str, model_name: str) -> str:
+        """根据供应商前缀和模型名获取实际模型名称（解析别名）"""
+        for ep in self.endpoints:
+            if not ep.enabled:
+                continue
+            if ep.name != provider_name:
+                continue
+            if model_name in ep.model_aliases:
+                return ep.model_aliases[model_name]
+            if model_name in ep.models:
+                return model_name
+        return model_name
     
     def get_model_conflicts(self) -> Dict[str, List[str]]:
         """获取模型名称冲突"""
@@ -284,10 +435,14 @@ class ConfigManager:
                 # 可用名称：优先别名，没有别名就用原名
                 available_name = alias if alias else model
                 
+                # 带供应商前缀的显示名称，防止不同供应商的同名模型混淆
+                display_name = f"{ep.name}/{available_name}"
+
                 models.append({
                     "model": model,
                     "alias": alias,
                     "available_name": available_name,
+                    "display_name": display_name,
                     "endpoint": ep.name,
                     "provider": ep.provider,
                     "has_conflict": model in conflicts,
@@ -357,3 +512,102 @@ def clear_session_key():
     """清除session key"""
     config.memory_settings.session_key_hash = None
     config.save_memory_settings()
+
+
+# ==================== WebUI Admin 认证（独立于 access key） ====================
+
+ADMIN_CONFIG_FILE = Path("./config/admin.json")
+
+# 内存中存储有效 session token: {token: expire_timestamp}
+_admin_tokens: Dict[str, float] = {}
+ADMIN_TOKEN_EXPIRE = 86400  # 24 小时
+
+
+def _load_admin_config() -> Dict[str, Optional[str]]:
+    """加载 admin.json 配置"""
+    if ADMIN_CONFIG_FILE.exists():
+        try:
+            with open(ADMIN_CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"加载 admin 配置失败: {e}")
+    return {"password_hash": None, "password_salt": None}
+
+
+def _save_admin_config(data: Dict[str, Optional[str]]) -> bool:
+    """保存 admin.json 配置"""
+    try:
+        ADMIN_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(ADMIN_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"保存 admin 配置失败: {e}")
+        return False
+
+
+def is_admin_configured() -> bool:
+    """检查 admin 密码是否已设置"""
+    cfg = _load_admin_config()
+    return cfg.get("password_hash") is not None
+
+
+def hash_admin_password(password: str, salt: Optional[str] = None) -> tuple:
+    """使用 PBKDF2-SHA256 对密码进行哈希
+
+    Returns: (hex_hash, salt)
+    """
+    if salt is None:
+        salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations=100_000)
+    return dk.hex(), salt
+
+
+def set_admin_password(password: str) -> bool:
+    """设置 admin 密码"""
+    pw_hash, salt = hash_admin_password(password)
+    return _save_admin_config({"password_hash": pw_hash, "password_salt": salt})
+
+
+def verify_admin_password(password: str) -> bool:
+    """验证 admin 密码"""
+    cfg = _load_admin_config()
+    if not cfg.get("password_hash") or not cfg.get("password_salt"):
+        return False
+    pw_hash, _ = hash_admin_password(password, cfg["password_salt"])
+    return secrets.compare_digest(pw_hash, cfg["password_hash"])
+
+
+def generate_admin_token() -> str:
+    """生成一个随机 session token"""
+    return secrets.token_urlsafe(48)
+
+
+def store_admin_token(token: str) -> None:
+    """存储 token 到内存"""
+    _admin_tokens[token] = time.time() + ADMIN_TOKEN_EXPIRE
+
+
+def verify_admin_token(token: str) -> bool:
+    """验证 token 是否有效且未过期"""
+    expire = _admin_tokens.get(token)
+    if expire is None:
+        return False
+    if time.time() > expire:
+        # 过期，清理
+        _admin_tokens.pop(token, None)
+        return False
+    return True
+
+
+def revoke_admin_token(token: str) -> None:
+    """撤销 token"""
+    _admin_tokens.pop(token, None)
+
+
+def cleanup_expired_tokens() -> None:
+    """清理过期 token"""
+    now = time.time()
+    expired = [t for t, exp in _admin_tokens.items() if now > exp]
+    for t in expired:
+        _admin_tokens.pop(t, None)
