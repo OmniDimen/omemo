@@ -351,7 +351,7 @@ async function loadAllData() {
 // 加载端点
 async function loadEndpoints() {
     try {
-        const response = await fetch('/api/config/endpoints');
+        const response = await authFetch('/api/config/endpoints');
         if (!response.ok) throw new Error('加载失败');
         state.endpoints = await response.json();
         renderEndpoints();
@@ -363,7 +363,7 @@ async function loadEndpoints() {
 // 加载模型列表
 async function loadModels() {
     try {
-        const response = await fetch('/api/models');
+        const response = await authFetch('/api/models');
         if (!response.ok) throw new Error('加载失败');
         state.models = await response.json();
         renderModels();
@@ -447,7 +447,7 @@ async function fetchModelsFromEndpoint() {
     elements.confirmModelPickerBtn.disabled = true;
     
     try {
-        const response = await fetch('/api/models/fetch', {
+        const response = await authFetch('/api/models/fetch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url, api_key: apiKey, provider })
@@ -602,7 +602,7 @@ async function saveEndpoint() {
         const url = isEdit ? `/api/config/endpoints/${encodeURIComponent(originalName)}` : '/api/config/endpoints';
         const method = isEdit ? 'PUT' : 'POST';
         
-        const response = await fetch(url, {
+        const response = await authFetch(url, {
             method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(formData)
@@ -634,7 +634,7 @@ async function deleteEndpoint(name) {
     if (!confirm(`确定要删除端点 "${name}" 吗？`)) return;
     
     try {
-        const response = await fetch(`/api/config/endpoints/${encodeURIComponent(name)}`, {
+        const response = await authFetch(`/api/config/endpoints/${encodeURIComponent(name)}`, {
             method: 'DELETE'
         });
         
@@ -650,7 +650,7 @@ async function deleteEndpoint(name) {
 // 加载记忆设置
 async function loadMemorySettings() {
     try {
-        const response = await fetch('/api/config/memory');
+        const response = await authFetch('/api/config/memory');
         if (!response.ok) throw new Error('加载失败');
         state.memorySettings = await response.json();
         
@@ -732,7 +732,7 @@ async function saveMemorySettings() {
     };
     
     try {
-        const response = await fetch('/api/config/memory', {
+        const response = await authFetch('/api/config/memory', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(settings)
@@ -778,7 +778,7 @@ async function saveGeneralSettings() {
     };
     
     try {
-        const response = await fetch('/api/config/memory', {
+        const response = await authFetch('/api/config/memory', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(settings)
@@ -801,10 +801,10 @@ async function toggleLogin() {
         let response;
         if (enabled) {
             // 启用登录，生成新的 session key
-            response = await fetch('/api/auth/enable', { method: 'POST' });
+            response = await authFetch('/api/auth/enable', { method: 'POST' });
         } else {
             // 禁用登录
-            response = await fetch('/api/auth/disable', { method: 'POST' });
+            response = await authFetch('/api/auth/disable', { method: 'POST' });
         }
         
         const data = await response.json();
@@ -843,7 +843,7 @@ async function resetSessionKey() {
     }
     
     try {
-        const response = await fetch('/api/auth/reset-key', { method: 'POST' });
+        const response = await authFetch('/api/auth/reset-key', { method: 'POST' });
         const data = await response.json();
         
         if (response.ok) {
@@ -892,7 +892,7 @@ async function loadMemories(keyword = '') {
         let url = '/api/memories';
         if (keyword) url += `?keyword=${encodeURIComponent(keyword)}`;
         
-        const response = await fetch(url);
+        const response = await authFetch(url);
         if (!response.ok) throw new Error('加载失败');
         state.memories = await response.json();
         renderMemories();
@@ -978,14 +978,14 @@ async function saveMemory() {
         let response;
         if (id) {
             // 更新
-            response = await fetch(`/api/memories/${id}`, {
+            response = await authFetch(`/api/memories/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content })
             });
         } else {
             // 添加
-            response = await fetch('/api/memories', {
+            response = await authFetch('/api/memories', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content })
@@ -1018,7 +1018,7 @@ async function deleteMemory(id) {
     if (!confirm('确定要删除这条记忆吗？')) return;
     
     try {
-        const response = await fetch(`/api/memories/${id}`, {
+        const response = await authFetch(`/api/memories/${id}`, {
             method: 'DELETE'
         });
         
@@ -1161,7 +1161,7 @@ async function saveAlias() {
     const alias = elements.aliasInput.value.trim();
     
     try {
-        const response = await fetch('/api/models/alias', {
+        const response = await authFetch('/api/models/alias', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

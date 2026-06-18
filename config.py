@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 import hashlib
+import hmac
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -342,7 +343,7 @@ def verify_session_key(key: str) -> bool:
     if not config.memory_settings.session_key_hash:
         return False  # 没有设置session key
     
-    return hash_session_key(key) == config.memory_settings.session_key_hash
+    return hmac.compare_digest(hash_session_key(key), config.memory_settings.session_key_hash)
 
 
 def set_session_key(key: str):
