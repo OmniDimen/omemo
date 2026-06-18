@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import Depends, FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -109,6 +109,20 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # ==================== 辅助函数 ====================
+
+async def require_auth(request: Request):
+    if not config.memory_settings.login_enabled:
+        return
+    auth_header = request.headers.get("Authorization", "")
+    session_key = None
+    if auth_header.startswith("Bearer "):
+        session_key = auth_header[7:]
+    if not session_key or not verify_session_key(session_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未授权访问，请提供有效的Session Key"
+        )
+
 
 def get_adapter_for_model(model: str):
     """根据模型名称获取适配器（支持别名，检测冲突）"""
@@ -208,13 +222,19 @@ async def do_setup(data: dict):
 # ==================== 管理API ====================
 
 @app.get("/api/config/endpoints")
-async def get_endpoints():
+async def get_endpoints(_: None = Depends(require_auth)):
     """获取所有端点配置"""
-    return [ep.model_dump() for ep in config.endpoints]
+    endpoints = []
+    for ep in config.endpoints:
+        data = ep.model_dump()
+        key = data.get("api_key", "")
+        data["api_key"] = f"***{key[-4:]}" if len(key) > 4 else "***"
+        endpoints.append(data)
+    return endpoints
 
 
 @app.post("/api/config/endpoints")
-async def add_endpoint(endpoint: EndpointConfig):
+async def add_endpoint(endpoint: EndpointConfig, _: None = Depends(require_auth)):
     """添加端点配置"""
     if not config.add_endpoint(endpoint):
         raise HTTPException(
@@ -225,7 +245,7 @@ async def add_endpoint(endpoint: EndpointConfig):
 
 
 @app.put("/api/config/endpoints/{name}")
-async def update_endpoint(name: str, endpoint: EndpointConfig):
+async def update_endpoint(name: str, endpoint: EndpointConfig, _: None = Depends(require_auth)):
     """更新端点配置"""
     if not config.update_endpoint(name, endpoint):
         raise HTTPException(
@@ -236,7 +256,7 @@ async def update_endpoint(name: str, endpoint: EndpointConfig):
 
 
 @app.delete("/api/config/endpoints/{name}")
-async def delete_endpoint(name: str):
+async def delete_endpoint(name: str, _: None = Depends(require_auth)):
     """删除端点配置"""
     if not config.delete_endpoint(name):
         raise HTTPException(
@@ -249,19 +269,19 @@ async def delete_endpoint(name: str):
 # ==================== 模型管理API ====================
 
 @app.get("/api/models")
-async def get_models():
+async def get_models(_: None = Depends(require_auth)):
     """获取所有模型列表（包含冲突信息）"""
     return config.get_all_models()
 
 
 @app.get("/api/models/conflicts")
-async def get_model_conflicts():
+async def get_model_conflicts(_: None = Depends(require_auth)):
     """获取模型冲突列表"""
     return config.get_model_conflicts()
 
 
 @app.post("/api/models/alias")
-async def set_model_alias(data: Dict[str, str]):
+async def set_model_alias(data: Dict[str, str], _: None = Depends(require_auth)):
     """设置模型别名"""
     endpoint_name = data.get("endpoint_name")
     model = data.get("model")
@@ -283,16 +303,21 @@ async def set_model_alias(data: Dict[str, str]):
 
 
 @app.get("/api/config/memory")
-async def get_memory_settings():
+async def get_memory_settings(_: None = Depends(require_auth)):
     """获取记忆设置"""
-    return config.memory_settings.model_dump()
+    data = config.memory_settings.model_dump()
+    data.pop("session_key_hash", None)
+    return data
 
 
 @app.post("/api/config/memory")
-async def update_memory_settings(settings: MemorySettings):
+async def update_memory_settings(settings: MemorySettings, _: None = Depends(require_auth)):
     """更新记忆设置"""
     global summarizer
-    
+
+    settings.session_key_hash = config.memory_settings.session_key_hash
+    settings.login_enabled = config.memory_settings.login_enabled
+
     if config.update_memory_settings(settings):
         # 更新内存中的设置
         manager.settings = settings
@@ -318,7 +343,7 @@ async def update_memory_settings(settings: MemorySettings):
 # ==================== 记忆管理API ====================
 
 @app.get("/api/memories")
-async def get_memories(keyword: Optional[str] = None):
+async def get_memories(keyword: Optional[str] = None, _: None = Depends(require_auth)):
     """获取所有记忆或搜索记忆"""
     if keyword:
         memories = manager.search_memories(keyword)
@@ -329,7 +354,7 @@ async def get_memories(keyword: Optional[str] = None):
 
 
 @app.post("/api/memories")
-async def add_memory(data: Dict[str, str]):
+async def add_memory(data: Dict[str, str], _: None = Depends(require_auth)):
     """添加记忆"""
     content = data.get("content", "").strip()
     if not content:
@@ -343,7 +368,7 @@ async def add_memory(data: Dict[str, str]):
 
 
 @app.put("/api/memories/{memory_id}")
-async def update_memory(memory_id: str, data: Dict[str, str]):
+async def update_memory(memory_id: str, data: Dict[str, str], _: None = Depends(require_auth)):
     """更新记忆"""
     content = data.get("content", "").strip()
     if not content:
@@ -363,7 +388,7 @@ async def update_memory(memory_id: str, data: Dict[str, str]):
 
 
 @app.delete("/api/memories/{memory_id}")
-async def delete_memory(memory_id: str):
+async def delete_memory(memory_id: str, _: None = Depends(require_auth)):
     """删除记忆"""
     if not manager.delete_memory(memory_id):
         raise HTTPException(
@@ -374,7 +399,7 @@ async def delete_memory(memory_id: str):
 
 
 @app.post("/api/models/fetch")
-async def fetch_models_from_endpoint(data: Dict[str, str]):
+async def fetch_models_from_endpoint(data: Dict[str, str], _: None = Depends(require_auth)):
     """从指定端点获取可用模型列表"""
     url = data.get("url", "").strip().rstrip("/")
     api_key = data.get("api_key", "").strip()
@@ -424,7 +449,7 @@ async def fetch_models_from_endpoint(data: Dict[str, str]):
 
 
 @app.get("/api/memories/stats")
-async def get_memory_stats():
+async def get_memory_stats(_: None = Depends(require_auth)):
     """获取记忆统计"""
     memories = manager.get_all_memories()
     return {
@@ -468,9 +493,18 @@ async def login(data: Dict[str, str]):
 
 
 @app.post("/api/auth/enable")
-async def enable_login():
+async def enable_login(request: Request):
     """启用登录功能（生成新的session key）"""
-    # 总是生成新的session key
+    if config.memory_settings.login_enabled:
+        auth_header = request.headers.get("Authorization", "")
+        session_key = None
+        if auth_header.startswith("Bearer "):
+            session_key = auth_header[7:]
+        if not session_key or not verify_session_key(session_key):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="未授权访问，请提供有效的Session Key"
+            )
     new_key = generate_session_key()
     set_session_key(new_key)
     config.memory_settings.login_enabled = True
@@ -483,7 +517,7 @@ async def enable_login():
 
 
 @app.post("/api/auth/disable")
-async def disable_login():
+async def disable_login(_: None = Depends(require_auth)):
     """禁用登录功能（销毁session key）"""
     config.memory_settings.login_enabled = False
     clear_session_key()
@@ -492,7 +526,7 @@ async def disable_login():
 
 
 @app.post("/api/auth/reset-key")
-async def reset_session_key():
+async def reset_session_key(_: None = Depends(require_auth)):
     """重置session key"""
     # 生成新的key
     new_key = generate_session_key()
@@ -506,7 +540,7 @@ async def reset_session_key():
 
 
 @app.post("/api/debug/preview-system-prompt")
-async def preview_system_prompt(data: dict):
+async def preview_system_prompt(data: dict, _: None = Depends(require_auth)):
     """预览系统提示词（调试用）"""
     original_system = data.get("system", "")
     mode = data.get("mode", config.memory_settings.memory_mode)
@@ -556,21 +590,8 @@ async def list_models():
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request):
+async def chat_completions(request: Request, _: None = Depends(require_auth)):
     """聊天完成接口 - 支持OpenAI格式"""
-    # 验证登录状态
-    if config.memory_settings.login_enabled:
-        auth_header = request.headers.get("Authorization", "")
-        session_key = None
-        if auth_header.startswith("Bearer "):
-            session_key = auth_header[7:]
-        
-        if not session_key or not verify_session_key(session_key):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="未授权访问，请提供有效的Session Key"
-            )
-    
     try:
         body = await request.json()
         openai_request = OpenAIChatRequest(**body)
@@ -938,21 +959,8 @@ async def chat_completions(request: Request):
 # ==================== Anthropic兼容API ====================
 
 @app.post("/v1/messages")
-async def anthropic_messages(request: Request):
+async def anthropic_messages(request: Request, _: None = Depends(require_auth)):
     """Anthropic格式的聊天完成接口"""
-    # 验证登录状态
-    if config.memory_settings.login_enabled:
-        auth_header = request.headers.get("Authorization", "")
-        session_key = None
-        if auth_header.startswith("Bearer "):
-            session_key = auth_header[7:]
-        
-        if not session_key or not verify_session_key(session_key):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="未授权访问，请提供有效的Session Key"
-            )
-    
     try:
         body = await request.json()
         anthropic_request = AnthropicChatRequest(**body)
