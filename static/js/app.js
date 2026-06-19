@@ -928,6 +928,58 @@ async function toggleAccessKey(keyId, enabled) {
     }
 }
 
+// 启用/禁用登录功能
+async function toggleLogin(enabled) {
+    try {
+        let response;
+        if (enabled) {
+            response = await authFetch('/api/auth/enable', { method: 'POST' });
+        } else {
+            response = await authFetch('/api/auth/disable', { method: 'POST' });
+        }
+
+        const data = await response.json();
+
+        if (response.ok) {
+            state.memorySettings.login_enabled = enabled;
+            updateLoginActionsVisibility();
+
+            if (data.session_key) {
+                showSessionKey(data.session_key);
+            }
+
+            if (!enabled) {
+                localStorage.removeItem('session_key');
+                state.isLoggedIn = false;
+            }
+
+            showToast(enabled ? '登录功能已启用' : '登录功能已禁用', 'success');
+        } else {
+            elements.loginToggle.checked = !enabled;
+            showToast(data.detail || '操作失败', 'error');
+        }
+    } catch (error) {
+        showToast('操作失败', 'error');
+    }
+}
+
+// 重置 Session Key
+async function resetSessionKey() {
+    try {
+        const response = await authFetch('/api/auth/reset-key', { method: 'POST' });
+        const data = await response.json();
+
+        if (response.ok) {
+            showSessionKey(data.session_key);
+            showToast('Session Key 已重置', 'success');
+        } else {
+            showToast(data.detail || '重置失败', 'error');
+        }
+    } catch (error) {
+        showToast('重置失败', 'error');
+    }
+}
+
 // 显示访问密钥弹窗
 function showAccessKeyModal(key) {
     if (elements.accessKeyDisplay) {
@@ -1377,6 +1429,8 @@ window.copyAccessKey = copyAccessKey;
 window.openAliasModal = openAliasModal;
 window.deleteAccessKey = deleteAccessKey;
 window.toggleAccessKey = toggleAccessKey;
+window.toggleLogin = toggleLogin;
+window.resetSessionKey = resetSessionKey;
 
 // ==================== 移动端菜单 ====================
 
