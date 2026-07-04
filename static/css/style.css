@@ -607,16 +607,30 @@ body {
     display: flex;
     gap: 8px;
     flex: 1;
-    max-width: 400px;
+    max-width: 550px;
     margin-right: 16px;
 }
 
-.search-box input {
-    flex: 1;
+.search-box input,
+.search-box select {
     padding: 10px 14px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius);
     font-size: 14px;
+    background-color: var(--card-bg);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-box input {
+    flex: 1;
+}
+
+.search-box input:focus,
+.search-box select:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(2, 128, 255, 0.1);
 }
 
 .empty-state {

@@ -71,6 +71,8 @@ function initElements() {
     // 记忆管理
     elements.memoriesList = document.getElementById('memories-list');
     elements.memorySearch = document.getElementById('memory-search');
+    elements.memoryDateFilter = document.getElementById('memory-date-filter');
+    elements.memorySort = document.getElementById('memory-sort');
     elements.searchBtn = document.getElementById('search-btn');
     elements.addMemoryBtn = document.getElementById('add-memory-btn');
     elements.memoryCount = document.getElementById('memory-count');
@@ -194,6 +196,16 @@ function bindEvents() {
     elements.memorySearch.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') searchMemories();
     });
+    if (elements.memorySort) {
+        elements.memorySort.addEventListener('change', () => {
+            renderMemories();
+        });
+    }
+    if (elements.memoryDateFilter) {
+        elements.memoryDateFilter.addEventListener('change', () => {
+            renderMemories();
+        });
+    }
     
     // 通用设置
     elements.saveGeneralSettingsBtn.addEventListener('click', saveGeneralSettings);
@@ -904,7 +916,24 @@ async function loadMemories(keyword = '') {
 
 // 渲染记忆列表
 function renderMemories() {
-    if (state.memories.length === 0) {
+    const sortOrder = elements.memorySort ? elements.memorySort.value : 'desc';
+    const filterDate = elements.memoryDateFilter ? elements.memoryDateFilter.value : '';
+    
+    let filteredMemories = [...state.memories];
+    
+    if (filterDate) {
+        filteredMemories = filteredMemories.filter(mem => {
+            return mem.created_at && mem.created_at.startsWith(filterDate);
+        });
+    }
+
+    const sortedMemories = filteredMemories.sort((a, b) => {
+        const timeA = new Date(a.created_at).getTime();
+        const timeB = new Date(b.created_at).getTime();
+        return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+    });
+
+    if (sortedMemories.length === 0) {
         elements.memoriesList.innerHTML = `
             <div class="empty-state">
                 <i class="fas fa-inbox"></i>
@@ -914,7 +943,7 @@ function renderMemories() {
         return;
     }
     
-    elements.memoriesList.innerHTML = state.memories.map(mem => `
+    elements.memoriesList.innerHTML = sortedMemories.map(mem => `
         <div class="memory-item" data-id="${mem.id}">
             <div class="memory-content">${escapeHtml(mem.content)}</div>
             <div class="memory-meta">
