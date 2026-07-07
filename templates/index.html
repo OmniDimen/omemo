@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Omni Memory - 带记忆功能的API中转站</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=1.2.1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -42,7 +42,7 @@
                 </a>
             </nav>
             <div class="sidebar-footer">
-                <p>v1.1.0</p>
+                <p>v1.2.0</p>
             </div>
         </aside>
 
@@ -252,6 +252,11 @@
                         <h2>记忆列表</h2>
                         <div class="search-box">
                             <input type="text" id="memory-search" placeholder="搜索记忆...">
+                            <input type="date" id="memory-date-filter" style="width: auto; cursor: pointer; color: var(--text-secondary);" title="按日期筛选记忆">
+                            <select id="memory-sort" style="width: auto; cursor: pointer;">
+                                <option value="desc">时间降序 (最新)</option>
+                                <option value="asc">时间升序 (最旧)</option>
+                            </select>
                             <button class="btn btn-icon" id="search-btn">
                                 <i class="fas fa-search"></i>
                             </button>
